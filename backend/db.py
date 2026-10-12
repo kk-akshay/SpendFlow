@@ -1,0 +1,182 @@
+"""SQLite schema and connection helpers. Money is stored as integer minor units (paise/cents)."""
+import sqlite3
+
+from .config import DB_PATH
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users(
+  id INTEGER PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  pw_hash BLOB NOT NULL,
+  pw_salt BLOB NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sessions(
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS accounts(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'bank',
+  last4 TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS categories(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  color TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'expense',      -- expense | income | savings | transfer
+  builtin INTEGER NOT NULL DEFAULT 0,
+  sort INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS statements(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  stored_path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  mime TEXT,
+  source_type TEXT,                           -- bank | gpay
+  parser TEXT,                                -- columns | text | gpay | ai
+  status TEXT NOT NULL DEFAULT 'preview',     -- preview | imported
+  warnings TEXT NOT NULL DEFAULT '[]',
+  date_from TEXT,
+  date_to TEXT,
+  txn_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS transactions(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  statement_id INTEGER REFERENCES statements(id) ON DELETE SET NULL,
+  date TEXT NOT NULL,
+  time TEXT,
+  amount_minor INTEGER NOT NULL CHECK(amount_minor >= 0),
+  direction TEXT NOT NULL CHECK(direction IN ('debit','credit')),
+  type TEXT NOT NULL CHECK(type IN ('income','expense','transfer')),
+  merchant TEXT NOT NULL DEFAULT '',
+  merchant_key TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  ref TEXT,
+  balance_minor INTEGER,
+  category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  note TEXT,
+  recurring INTEGER NOT NULL DEFAULT 0,
+  recurring_freq TEXT,
+  status TEXT NOT NULL DEFAULT 'staged' CHECK(status IN ('staged','pending','categorized','skipped')),
+  dup_status TEXT,                            -- NULL | exact | suspected | cleared
+  dup_of INTEGER,
+  transfer_pair_id INTEGER,
+  flags TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  reviewed_at TEXT,
+  skipped_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_txn_user_date ON transactions(user_id, date);
+CREATE INDEX IF NOT EXISTS idx_txn_user_status ON transactions(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_txn_user_amount ON transactions(user_id, amount_minor);
+CREATE INDEX IF NOT EXISTS idx_txn_user_merchant ON transactions(user_id, merchant_key);
+CREATE INDEX IF NOT EXISTS idx_txn_statement ON transactions(statement_id);
+
+CREATE TABLE IF NOT EXISTS splits(
+  id INTEGER PRIMARY KEY,
+  txn_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+  category_id INTEGER NOT NULL REFERENCES categories(id),
+  amount_minor INTEGER NOT NULL CHECK(amount_minor > 0),
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_splits_txn ON splits(txn_id);
+
+CREATE TABLE IF NOT EXISTS merchant_rules(
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  merchant_key TEXT NOT NULL,
+  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  hits INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY(user_id, merchant_key)
+);
+
+CREATE TABLE IF NOT EXISTS budgets(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  category_id INTEGER REFERENCES categories(id) ON DELETE CASCADE,   -- NULL = overall monthly limit
+  limit_minor INTEGER NOT NULL CHECK(limit_minor > 0)
+);
+
+CREATE TABLE IF NOT EXISTS goals(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  target_minor INTEGER NOT NULL CHECK(target_minor > 0),
+  saved_minor INTEGER NOT NULL DEFAULT 0,
+  deadline TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+# name, colour, kind. Colours are mid-tone so they read on both light and dark surfaces.
+DEFAULT_CATEGORIES = [
+    ("Food", "#E07B39", "expense"),
+    ("Groceries", "#5FA55A", "expense"),
+    ("Transport", "#4A8FE0", "expense"),
+    ("Shopping", "#C25BA8", "expense"),
+    ("Bills", "#8B78D6", "expense"),
+    ("Rent", "#B07D52", "expense"),
+    ("Health", "#D9534F", "expense"),
+    ("Entertainment", "#D8A82B", "expense"),
+    ("Education", "#2FA39E", "expense"),
+    ("Travel", "#3BAED6", "expense"),
+    ("Family", "#E0809A", "expense"),
+    ("Subscriptions", "#6E83E6", "expense"),
+    ("Income", "#3DAA73", "income"),
+    ("Savings", "#1F9D8B", "savings"),
+    ("Transfers", "#8E98A4", "transfer"),
+    ("Other", "#A09A92", "expense"),
+]
+
+
+def connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def init_db() -> None:
+    conn = connect()
+    try:
+        conn.executescript(SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_db():
+    """FastAPI dependency: one connection per request."""
+    conn = connect()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def seed_categories(db: sqlite3.Connection, user_id: int) -> None:
+    for i, (name, color, kind) in enumerate(DEFAULT_CATEGORIES):
+        db.execute(
+            "INSERT OR IGNORE INTO categories(user_id,name,color,kind,builtin,sort) VALUES(?,?,?,?,1,?)",
+            (user_id, name, color, kind, i),
+        )
