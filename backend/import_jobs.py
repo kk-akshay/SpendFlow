@@ -61,7 +61,7 @@ def enqueue(uid, files, account_id=None, new_name=None, new_type="bank", passwor
         manifest.append({"filename": name, "path": str(path), "kind": kind,
                          "sha256": hashlib.sha256(data).hexdigest()})
     payload = {"files": manifest, "account_id": account_id, "new_name": new_name,
-               "new_type": new_type, "password": password, "use_ai": use_ai}
+               "new_type": new_type, "use_ai": use_ai}
     dep = _db()
     db = next(dep)
     try:
@@ -73,11 +73,11 @@ def enqueue(uid, files, account_id=None, new_name=None, new_type="bank", passwor
             next(dep)
         except StopIteration:
             pass
-    _pool.submit(_process, job_id, uid, payload)
+    _pool.submit(_process, job_id, uid, payload, password)
     return job_id
 
 
-def _process(job_id, uid, payload):
+def _process(job_id, uid, payload, password):
     from .main import MIME, _resolve_account
     _set(job_id, "processing")
     results = []
@@ -93,11 +93,11 @@ def _process(job_id, uid, payload):
             path = Path(item["path"])
             try:
                 # Parsing occurs WITHOUT an open DB connection.
-                parsed = parse_file(str(path), item["kind"], payload["password"], payload["use_ai"])
+                parsed = parse_file(str(path), item["kind"], password, payload["use_ai"])
             except PasswordRequired:
                 result.update(needs_password=True, error="Password required or incorrect.")
                 continue
-            except (UnreadableDocument, Exception):
+            except Exception:
                 log.exception("Import parsing failed for job %s", job_id)
                 result["error"] = "Unable to read statement."
                 continue
