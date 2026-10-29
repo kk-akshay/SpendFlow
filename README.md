@@ -1,4 +1,4 @@
-# Tally
+# SpendFlow
 
 A personal finance app that helps you understand where your money goes. Upload bank or Google Pay statements
 (PDF or image), then answer "What was this transaction for?" one card at a time.
@@ -12,8 +12,8 @@ python3 -m uvicorn backend.main:app --port 8000
 # open http://localhost:8000 and create an account
 ```
 
-Data lives in `data/` (SQLite database + uploaded files). Override with `TALLY_DATA=/path`.
-Optional: `TALLY_CURRENCY=INR|USD|...`, `TALLY_COOKIE_SECURE=1` when served over HTTPS,
+Data lives in `data/` (SQLite database + uploaded files). Override with `SPENDFLOW_DATA=/path`.
+Optional: `SPENDFLOW_CURRENCY=INR|USD|...`, `SPENDFLOW_COOKIE_SECURE=1` when served over HTTPS,
 `ANTHROPIC_API_KEY=...` to enable the opt-in "Use AI to read it" checkbox on import.
 
 ## How it works
