@@ -91,12 +91,18 @@ routes.dashboard = async (main, [month]) => {
 };
 
 function txnRow(t) {
-  const inflow = t.direction === 'credit', c = t.is_split ? 'Split' : t.category_name;
-  return `<div class="txn" data-txn="${t.id}" tabindex="0" role="button">
-    <span class="dot" style="background:var(--shade-3);width:12px;height:12px"></span>
-    <div class="grow"><div class="ell"><b>${esc(t.merchant || t.description.slice(0, 40) || 'Unknown')}</b>${t.dup_status === 'suspected' ? ' <span class="pill warn">Possible duplicate</span>' : ''}</div>
-      <div class="small muted ell">${fdate(t.date, false)} · ${esc(c || (t.status === 'skipped' ? 'Skipped' : 'Needs a category'))}${t.type === 'transfer' ? ' · Transfer' : ''}${t.recurring ? ' · ↻' : ''}</div></div>
-    <b class="num ${t.type === 'transfer' ? 'muted' : inflow ? 'amount-in' : 'amount-out'}">${inflow ? '↑ +' : '↓ −'}${money(t.amount_minor)}</b></div>`;
+  const inflow = t.direction === 'credit';
+  const category = t.is_split ? 'Split' : (t.category_name || (t.status === 'skipped' ? 'Skipped' : 'Needs a category'));
+  const details = (t.type === 'transfer' ? ' · Transfer' : '') + (t.recurring ? ' · ↻' : '');
+  const merchant = t.merchant || (t.description || '').slice(0, 60) || 'Unknown';
+  return `<div class="txn history-txn" data-txn="${t.id}" tabindex="0" role="button" aria-label="Open ${esc(merchant)} transaction">
+    <span class="dot history-txn-dot" aria-hidden="true"></span>
+    <div class="history-txn-name"><div class="history-txn-merchant ell"><b>${esc(merchant)}</b>${t.dup_status === 'suspected' ? ' <span class="pill warn">Possible duplicate</span>' : ''}</div>
+      <div class="history-txn-mobile-meta small muted">${fdate(t.date, false)} · ${esc(category)}${details}</div></div>
+    <span class="history-txn-date small muted">${fdate(t.date)}</span>
+    <span class="history-txn-category small muted">${esc(category)}${details}</span>
+    <b class="history-txn-amount num ${t.type === 'transfer' ? 'muted' : inflow ? 'amount-in' : 'amount-out'}">${inflow ? '↑ +' : '↓ −'}${money(t.amount_minor)}</b>
+    <span class="history-txn-chevron" aria-hidden="true">›</span></div>`;
 }
 function budgetBars(b, compact) {
   const rows = [...(b.overall ? [{ category_name: 'All spending', category_color: 'var(--accent)', ...b.overall }] : []), ...b.items];
@@ -231,7 +237,7 @@ routes.transactions = async (main, [pre]) => {
         <label class="check"><input type="checkbox" id="frec"> Recurring only</label>
         <div><label for="ffrom">From</label><input type="date" id="ffrom" value="${esc(f.from.replace(/-31$/, '-01'))}"></div><div><label for="fto">To</label><input type="date" id="fto"></div>
         <div class="row" style="flex-wrap:nowrap"><input id="fmin" inputmode="decimal" placeholder="Min ₹" aria-label="Minimum amount"><input id="fmax" inputmode="decimal" placeholder="Max ₹" aria-label="Maximum amount"></div></div></details></div>
-    <div id="list"></div><div id="selbar" aria-live="polite"></div>`;
+    <div id="selbar" aria-live="polite"></div><div id="list"></div>`;
   $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
   $('#imp').onclick = () => openImport();
   $('#add-manual').onclick = () => manualTransaction(todayIso(), load);
@@ -250,8 +256,8 @@ routes.transactions = async (main, [pre]) => {
   function draw() {
     $('#sub').textContent = `${data.total} transaction${data.total === 1 ? '' : 's'} · in ${money(data.money_in)} · out ${money(data.money_out)}`;
     if (f.dup) loadDups();
-    if (!data.items.length) { $('#list').innerHTML = `<div class="empty card"><div class="big">🔍</div><h2>${f.dup ? 'No duplicates to check' : 'Nothing matches'}</h2><p>${f.dup ? 'Nice and tidy.' : 'Try clearing a filter, or import a statement.'}</p></div>`; return; }
-    $('#list').innerHTML = `<div class="card"><div class="list">${data.items.map((t) => `<div class="row" style="flex-wrap:nowrap">${t.removed_at ? `<button class="btn sm" data-restore="${t.id}">Restore</button>` : ''}<input type="checkbox" data-sel="${t.id}" style="width:18px;min-height:0;flex:none" aria-label="Select" ${selected.has(t.id) ? 'checked' : ''}><div style="flex:1;min-width:0">${txnRow(t)}</div></div>`).join('')}</div>
+    if (!data.items.length) { $('#list').innerHTML = `<div class="empty card"><div class="big">🔍</div><h2>${f.dup ? 'No duplicates to check' : 'Nothing matches'}</h2><p>${f.dup ? 'Nice and tidy.' : 'Try clearing a filter, or import a statement.'}</p></div>`; selbar(); return; }
+    $('#list').innerHTML = `<div class="card"><div class="list">${data.items.map((t) => `<div class="history-entry">${t.removed_at ? `<button class="btn sm" data-restore="${t.id}">Restore</button>` : ''}<input type="checkbox" class="history-select" data-sel="${t.id}" aria-label="Select ${esc(t.merchant || 'transaction')}" ${selected.has(t.id) ? 'checked' : ''}><div class="history-entry-body">${txnRow(t)}</div></div>`).join('')}</div>
       ${data.pages > 1 ? `<div class="row" style="justify-content:center;margin-top:14px"><button class="btn sm" id="pp" ${f.page <= 1 ? 'disabled' : ''}>Previous</button><span class="small muted">Page ${data.page} of ${data.pages}</span><button class="btn sm" id="np" ${f.page >= data.pages ? 'disabled' : ''}>Next</button></div>` : ''}</div>`;
     $('#pp') && ($('#pp').onclick = () => { f.page--; load(); }); $('#np') && ($('#np').onclick = () => { f.page++; load(); });
     selbar();
