@@ -118,6 +118,10 @@ function renderAuth(mode = 'login') {
     <p class="small muted" style="text-align:center;margin-top:16px">${mode === 'login' ? 'New here?' : 'Already have an account?'} <a href="#" id="aswitch">${mode === 'login' ? 'Create an account' : 'Sign in'}</a></p>
     ${mode === 'login' ? '<p class="small muted" style="text-align:center;margin-top:8px"><a href="#" id="forgot-password">Forgot password?</a></p>' : ''}
   </form></div>`;
+  if (mode === 'register') {
+    const saved = sessionStorage.getItem('spendflow-auth-email');
+    if (saved) $('#em').value = saved;
+  }
   $('#forgot-password') && ($('#forgot-password').onclick = e => { e.preventDefault(); renderPasswordReset(); });
   $('#aswitch').onclick = (e) => { e.preventDefault(); renderAuth(mode === 'login' ? 'register' : 'login'); };
   $('#af').onsubmit = async (e) => {
@@ -126,7 +130,15 @@ function renderAuth(mode = 'login') {
     try {
       S.user = await api(`/auth/${mode}`, { method: 'POST', body: { email: $('#em').value, password: $('#pw').value } });
       await boot();
-    } catch (er) { $('#aerr').innerHTML = `<div class="err-box" role="alert">${esc(er.message)}</div>`; btn.disabled = false; btn.textContent = mode === 'login' ? 'Sign in' : 'Create account'; }
+    } catch (er) {
+      if (mode === 'register' && /already exists/i.test(er.message)) {
+        const email = $('#em').value.trim();
+        $('#aerr').innerHTML = '<div class="err-box" role="alert">This email already has an account. <button type="button" class="btn sm" id="existing-signin">Sign in</button> <button type="button" class="btn sm" id="existing-reset">Reset password</button></div>';
+        $('#existing-signin').onclick = () => { renderAuth('login'); $('#em').value = email; };
+        $('#existing-reset').onclick = () => { renderPasswordReset(); $('#recovery-email').value = email; };
+      } else $('#aerr').innerHTML = `<div class="err-box" role="alert">${esc(er.message)}</div>`;
+      btn.disabled = false; btn.textContent = mode === 'login' ? 'Sign in' : 'Create account';
+    }
   };
 }
 
@@ -340,5 +352,12 @@ function editRow(r, done, statementId) {
 
 /* ---------- start ---------- */
 (async () => {
-  try { S.user = await api('/auth/me'); await boot(); } catch { renderAuth(); }
+  try {
+    const session = await api('/auth/session');
+    if (session.authenticated) { S.user = session.user; await boot(); }
+    else renderAuth('login');
+  } catch (e) {
+    renderAuth('login');
+    $('#aerr').innerHTML = `<div class="err-box" role="alert">Unable to check the server session. ${esc(e.message)}</div>`;
+  }
 })();
