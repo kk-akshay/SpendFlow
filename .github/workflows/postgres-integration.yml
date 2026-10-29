@@ -24,6 +24,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
+      PYTHONPATH: "."
       SPENDFLOW_TEST_DATABASE: "1"
       DATABASE_URL: postgresql://spendflow_test:spendflow_test@127.0.0.1:5432/spendflow_test
     steps:
