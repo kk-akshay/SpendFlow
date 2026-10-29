@@ -20,6 +20,7 @@ jobs:
       - run: python tests/ledger_test.py
       - run: python tests/spendflow_test.py
       - run: python tests/password_recovery_test.py
+      - run: python tests/settings_selector_test.py
       - run: python tests/make_samples.py tests/samples
       - run: python tests/api_test.py tests/samples
       - uses: actions/setup-node@v4
