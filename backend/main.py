@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from . import analytics, importing, ledger, parse_llm, txns
 from .auth import (EMAIL_RE, clear_throttle, current_user, end_session, hash_password, require_csrf,
-                   start_session, throttle, verify_password, redeem_password_reset, update_password)
+                   start_session, throttle, verify_password, redeem_password_reset, update_password, issue_password_reset, mail_recovery_available, send_password_reset_email)
 from .config import (CURRENCY, FRONTEND_DIR, LOCALE, MAX_FILES_PER_IMPORT, MAX_UPLOAD_BYTES, UPLOAD_DIR)
 from .db import get_db, init_db, seed_categories
 from .extract import PasswordRequired, UnreadableDocument, sniff_kind
@@ -120,6 +120,29 @@ def change_password(b: ChangePassword, response: Response, user=Depends(current_
     return {"ok": True, "message": "Password changed. Please sign in again."}
 
 
+class ForgotPasswordIn(BaseModel):
+    email: str
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(b: ForgotPasswordIn, request: Request, db=Depends(get_db)):
+    if not mail_recovery_available():
+        raise HTTPException(503, "Email recovery is not configured on this server. Contact the server administrator.")
+    ip = request.client.host if request.client else "unknown"
+    throttle("forgot-ip|" + ip, limit=6, window=900)
+    email = b.email.strip().lower()
+    if len(email) <= 200 and EMAIL_RE.match(email):
+        throttle("forgot-account|" + hashlib.sha256(email.encode()).hexdigest(), limit=4, window=900)
+        code = issue_password_reset(db, email)
+        if code:
+            try:
+                send_password_reset_email(email, code)
+            except Exception:
+                # Never reveal which accounts exist or leak the code on delivery errors.
+                pass
+    return {"ok": True, "message": "If that account exists, a recovery code has been sent."}
+
+
 class PasswordResetIn(BaseModel):
     token: str
     new_password: str
@@ -131,7 +154,7 @@ def reset_password(b: PasswordResetIn, request: Request, response: Response, db=
     if len(b.new_password) < 12 or len(b.new_password) > 1024:
         raise HTTPException(400, "Choose a password of at least 12 characters.")
     if not redeem_password_reset(db, b.token, b.new_password):
-        raise HTTPException(400, "That reset code is invalid or expired. Generate a new code locally.")
+        raise HTTPException(400, "That reset code is invalid or expired. Request another code.")
     response.delete_cookie("spendflow_session", path="/")
     response.delete_cookie("tally_session", path="/")
     return {"ok": True}

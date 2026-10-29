@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import smtplib
+from email.message import EmailMessage
 import re
 import secrets
 import time
@@ -12,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, Response
 
-from .config import COOKIE_NAME, COOKIE_SECURE, LEGACY_COOKIE_NAME, SESSION_DAYS
+from .config import COOKIE_NAME, COOKIE_SECURE, LEGACY_COOKIE_NAME, SESSION_DAYS, SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM, SMTP_MODE, SMTP_PORT
 from .db import get_db
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -128,3 +130,32 @@ def redeem_password_reset(db, token: str, new_password: str) -> bool:
         return False
     update_password(db, row["user_id"], new_password)
     return True
+
+def mail_recovery_available() -> bool:
+    return bool(SMTP_HOST and SMTP_FROM and SMTP_MODE in ("starttls", "ssl") and
+                (not SMTP_USERNAME or SMTP_PASSWORD))
+
+
+def send_password_reset_email(recipient: str, code: str) -> None:
+    """Send a recovery code through configured SMTP; never expose it in an API response."""
+    if not mail_recovery_available():
+        raise RuntimeError("Password recovery email is not configured.")
+    message = EmailMessage()
+    message["Subject"] = "Your SpendFlow password reset code"
+    message["From"] = SMTP_FROM
+    message["To"] = recipient
+    message.set_content(
+        "Someone requested a SpendFlow password reset.\n\n"
+        f"Your one-time reset code is:\n{code}\n\n"
+        "It expires in 15 minutes. If you did not request it, ignore this message.\n"
+    )
+    if SMTP_MODE == "ssl":
+        conn = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=12)
+    else:
+        conn = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=12)
+    with conn as server:
+        if SMTP_MODE == "starttls":
+            server.starttls()
+        if SMTP_USERNAME:
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        server.send_message(message)
