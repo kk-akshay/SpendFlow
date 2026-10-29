@@ -650,7 +650,7 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         undo = txns.bulk(db, uid, [txn_id], "pending", {})["undo"]
         return {"txn": txns.get_txn(db, uid, txn_id), "undo": undo}
 
-    if db.execute("SELECT 1 FROM transaction_group_members WHERE txn_id=?", (txn_id,)).fetchone() and (
+    if db.execute("SELECT 1 FROM (SELECT txn_id FROM transaction_group_members UNION ALL SELECT txn_id FROM flow_group_members) WHERE txn_id=?", (txn_id,)).fetchone() and (
         ("category_id" in body and body["category_id"] != row["category_id"]) or body.get("splits") or
         ("type" in body and body["type"] != row["type"]) or
         ("direction" in body and body["direction"] != row["direction"]) or
@@ -1080,8 +1080,11 @@ def create_flow(b: FlowIn, user=Depends(current_user), db=Depends(get_db)):
         raise ValueError("Link between 2 and 50 transactions")
     marks=",".join("?" * len(ids))
     rows=db.execute(f"SELECT * FROM transactions WHERE user_id=? AND id IN ({marks}) AND status!='staged' AND removed_at IS NULL", [user["id"],*ids]).fetchall()
-    if len(rows)!=len(ids) or db.execute(f"SELECT 1 FROM flow_group_members WHERE txn_id IN ({marks}) LIMIT 1",ids).fetchone():
+    if len(rows)!=len(ids) or db.execute(f"SELECT 1 FROM flow_group_members WHERE txn_id IN ({marks}) LIMIT 1",ids).fetchone() or db.execute(f"SELECT 1 FROM transaction_group_members WHERE txn_id IN ({marks}) LIMIT 1",ids).fetchone():
         raise ValueError("Some transactions cannot be linked; check existing flow groups")
+    for row in rows:
+        if row["dup_status"]=="suspected" or db.execute("SELECT 1 FROM splits WHERE txn_id=?", (row["id"],)).fetchone():
+            raise ValueError("Resolve suspected duplicates and split categories before linking")
     cur=db.execute("INSERT INTO flow_groups(user_id,kind) VALUES(?,?)",(user["id"],b.kind))
     for row in rows:
         db.execute("INSERT INTO flow_group_members(txn_id,group_id,original_type,original_category_id,original_status,original_reviewed_at,original_skipped_at) VALUES(?,?,?,?,?,?,?)",(row["id"],cur.lastrowid,row["type"],row["category_id"],row["status"],row["reviewed_at"],row["skipped_at"]))
