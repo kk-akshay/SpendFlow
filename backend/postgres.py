@@ -73,6 +73,11 @@ def _convert_sql(sql: str) -> tuple[str, bool]:
                  r"(\\1::date - \\2::date)", sql, flags=re.I)
     # SQLite LIKE is case-insensitive for ASCII; retain case-insensitive search.
     sql = re.sub(r"\\bLIKE\\b", "ILIKE", sql, flags=re.I)
+    # SQLite allows boolean values in SUM(); PostgreSQL needs integers.
+    sql = re.sub(r"SUM\\((\\w+(?:\\.\\w+)?\\s*=\\s*'[^']+')\\)",
+                 r"SUM(CASE WHEN \\1 THEN 1 ELSE 0 END)", sql, flags=re.I)
+    # SQLite's string concatenation accepts integer IDs; PG needs explicit cast.
+    sql = re.sub(r"'id'\\s*\\|\\|\\s*id\\b", "'id' || id::text", sql, flags=re.I)
     sql = sql.replace("?", "%s")
     m = _INSERT.match(sql)
     returning = bool(m and m.group(1).lower() in IDENTITY_TABLES
