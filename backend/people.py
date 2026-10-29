@@ -16,7 +16,7 @@ def own(db,uid,pid):
 def overview(db,uid):
     persons=[dict(x) for x in db.execute("SELECT * FROM people WHERE user_id=? ORDER BY lower(name),id",(uid,))]
     for p in persons:
-        p["upi_ids"]=[r["upi_id"] for r in db.execute("SELECT upi_id FROM people_upi WHERE person_id=? ORDER BY upi_id",(p["id"],))]
+        p["upi_ids"]=[dict(r) for r in db.execute("SELECT id,upi_id FROM people_upi WHERE person_id=? ORDER BY upi_id",(p["id"],))]
         p["transactions"]=[dict(r) for r in db.execute(
           "SELECT t.id,t.date,t.amount_minor,t.direction,t.description,t.merchant,t.account_id,a.name AS account_name,l.role FROM people_transactions l "
           "JOIN transactions t ON t.id=l.txn_id JOIN accounts a ON a.id=t.account_id "
