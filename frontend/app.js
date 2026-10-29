@@ -292,17 +292,40 @@ routes.import = async (main, [ids]) => {
       ${sm.suspected_duplicates ? `<div class="warn-box"><b>${sm.suspected_duplicates} possible duplicates</b> of transactions in another account or statement (for example a bank payment also shown in Google Pay). They're kept out of your totals until you decide.</div>` : ''}
       <div class="card flat"><div class="row" style="justify-content:space-between;margin-bottom:8px"><h2>Transactions</h2>
         <div class="row">${needsLook.length ? `<label class="check small"><input type="checkbox" id="onlyflag"> Only rows needing a look (${needsLook.length})</label>` : ''}<button class="btn sm" id="addrow">+ Add missing row</button></div></div>
-        <div class="scroll-x"><table><thead><tr><th>Date</th><th>Description</th><th class="r">Amount</th><th></th></tr></thead><tbody id="rows"></tbody></table></div></div>`;
+        <div class="scroll-x import-preview-table"><table><thead><tr><th>Date</th><th>Description</th><th class="r">Amount</th><th></th></tr></thead><tbody id="rows"></tbody></table></div><div class="import-preview-cards" id="mobile-import-rows"></div><button class="btn sm import-show-more" id="import-more" hidden>Show more</button></div>`;
     const tb = $('#rows');
+    let previewLimit = 50;
     const draw = (only) => {
-      tb.innerHTML = rows.filter((r) => !only || needsLook.includes(r)).map((r) => {
-        const fl = r.flags.filter((f) => !f.startsWith('Read with OCR'));
-        const dup = r.dup_status === 'exact' ? `<div class="flag">Already imported${r.dup_info ? ' (' + esc(fdate(r.dup_info.date)) + ', ' + esc(r.dup_info.account_name) + ')' : ''}. Will be skipped.</div>`
-          : r.dup_status === 'suspected' ? `<div class="flag">Possible duplicate${r.dup_info ? ' of ' + esc(fdate(r.dup_info.date)) + ' in ' + esc(r.dup_info.account_name) : ''}. <a href="#" data-keep="${r.id}">Import anyway</a></div>` : '';
-        return `<tr style="${r.dup_status === 'exact' ? 'opacity:.5' : ''}"><td class="num ell">${fdate(r.date)}</td><td><div class="ell" style="max-width:420px" title="${esc(r.description)}">${esc(r.description || r.merchant)}</div>${fl.map((f) => `<div class="flag">⚠ ${esc(f)}</div>`).join('')}${dup}</td>
-          <td class="r num ${r.direction === 'credit' ? 'pos' : ''}">${r.direction === 'credit' ? '+' : '−'}${money(r.amount_minor).replace('−', '')}</td>
-          <td class="r" style="white-space:nowrap"><button class="btn sm ghost" data-edit="${r.id}">Edit</button><button class="btn sm ghost danger" data-del="${r.id}" aria-label="Remove row">✕</button></td></tr>`;
+      const filtered = rows.filter((r) => !only || needsLook.includes(r));
+      const shown = filtered.slice(0, previewLimit);
+      const flagsFor = (r) => r.flags.filter(f => !f.startsWith('Read with OCR'));
+      const duplicateFor = (r) => r.dup_status === 'exact' ? 'Already imported · will be skipped' :
+        r.dup_status === 'suspected' ? 'Possible duplicate · review before importing' : '';
+      tb.innerHTML = shown.map((r) => {
+        const dup = duplicateFor(r);
+        return `<tr style="${r.dup_status === 'exact' ? 'opacity:.55' : ''}"><td class="num" style="white-space:nowrap">${fdate(r.date)}</td>
+          <td><div class="ell" style="max-width:420px" title="${esc(r.description)}">${esc(r.description || r.merchant)}</div>${flagsFor(r).map(f=>`<div class="flag">⚠ ${esc(f)}</div>`).join('')}${dup ? `<div class="flag">${esc(dup)}</div>` : ''}${r.dup_status === 'suspected' ? `<a href="#" data-keep="${r.id}">Import anyway</a>` : ''}</td>
+          <td class="r num" style="white-space:nowrap">${r.direction === 'credit' ? '+' : '−'}${money(r.amount_minor).replace('−','')}</td>
+          <td style="white-space:nowrap"><button class="btn sm ghost" data-edit="${r.id}">Edit</button><button class="btn sm ghost danger" data-del="${r.id}" aria-label="Remove row">✕</button></td></tr>`;
       }).join('') || '<tr><td colspan="4" class="muted">No rows.</td></tr>';
+      $('#mobile-import-rows').innerHTML = shown.map(r => `
+        <article class="import-row-card ${r.dup_status === 'exact' ? 'import-row-exact' : ''}">
+          <div class="import-row-top"><span class="import-row-date">${fdate(r.date)}</span>
+            <b class="import-row-amount num">${r.direction === 'credit' ? '+' : '−'}${money(r.amount_minor).replace('−','')}</b></div>
+          <div class="import-row-description">${esc(r.description || r.merchant)}</div>
+          ${flagsFor(r).map(f=>`<div class="flag">⚠ ${esc(f)}</div>`).join('')}
+          ${duplicateFor(r) ? `<div class="flag">${esc(duplicateFor(r))}</div>` : ''}
+          <div class="import-row-actions">
+            ${r.dup_status === 'suspected' ? `<a href="#" data-keep="${r.id}">Import anyway</a>` : ''}
+            <button class="btn sm" data-edit="${r.id}">Edit</button>
+            <button class="btn sm ghost danger" data-del="${r.id}" aria-label="Remove row">Remove</button>
+          </div>
+        </article>`).join('') || '<p class="muted small">No rows.</p>';
+      const more = $('#import-more');
+      const remaining = filtered.length - shown.length;
+      more.hidden = remaining <= 0;
+      more.textContent = 'Show more (' + remaining + ' remaining)';
+      more.onclick = () => { previewLimit += 50; draw(only); };
     };
     if ($('#onlyflag')) $('#onlyflag').checked = keepFlag;
     draw(keepFlag);
