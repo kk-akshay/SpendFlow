@@ -24,9 +24,10 @@ jobs:
       - run: python tests/settings_selector_test.py
       - run: python tests/people_selector_test.py
       - run: python tests/monochrome_ui_test.py
+      - run: python tests/mobile_shell_test.py
       - run: python tests/make_samples.py tests/samples
       - run: python tests/api_test.py tests/samples
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: node --check frontend/app.js && node --check frontend/pages.js && node --check frontend/review.js && node --check frontend/people.js
+      - run: node --check frontend/shell.js && node --check frontend/app.js && node --check frontend/pages.js && node --check frontend/review.js && node --check frontend/people.js
