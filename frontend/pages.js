@@ -1,39 +1,56 @@
 /* Dashboard, History, Plan (budgets/goals/recurring) and Settings. */
 
-/* ---------- small chart helpers (inline SVG) ---------- */
-function donut(items, total) {
-  const R = 54, C = 2 * Math.PI * R; let off = 0;
-  const arcs = items.map((b) => { const len = (b.amount_minor / total) * C; const a = `<circle r="${R}" cx="70" cy="70" fill="none" stroke="${esc(b.color)}" stroke-width="20" stroke-dasharray="${Math.max(len - 1.5, 0)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)"><title>${esc(b.name)} ${money(b.amount_minor)}</title></circle>`; off += len; return a; }).join('');
+/* ---------- monochrome data visualisations ---------- */
+function donut(items,total) {
+  const R=54,C=2*Math.PI*R;let off=0;
+  const arcs=items.map((b,i)=>{
+    const len=(Math.max(0,b.amount_minor)/Math.max(total,1))*C;
+    const a=`<circle r="${R}" cx="70" cy="70" fill="none" stroke="var(--shade-${i%6})" stroke-width="20" stroke-dasharray="${Math.max(len-1.5,0)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)"><title>${esc(b.name)} ${money(b.amount_minor)}</title></circle>`;
+    off+=len;return a;
+  }).join('');
   return `<svg viewBox="0 0 140 140" width="150" height="150" role="img" aria-label="Spending by category">${arcs}</svg>`;
 }
-function trendChart(trend) {
-  const W = 520, H = 190, pad = 26, max = Math.max(1, ...trend.flatMap((t) => [t.income, t.expense]));
-  const bw = (W - pad * 2) / trend.length;
-  const bars = trend.map((t, i) => {
-    const x = pad + i * bw, h1 = ((H - 44) * t.income) / max, h2 = ((H - 44) * t.expense) / max, w = bw * 0.3;
-    return `<g><rect x="${x + bw * 0.16}" y="${H - 24 - h1}" width="${w}" height="${h1}" rx="4" fill="var(--accent)" opacity=".85"><title>${fmonth(t.month)} income ${money(t.income)}</title></rect>
-      <rect x="${x + bw * 0.16 + w + 3}" y="${H - 24 - h2}" width="${w}" height="${h2}" rx="4" fill="var(--warn)"><title>${fmonth(t.month)} spending ${money(t.expense)}</title></rect>
-      <text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${fmonth(t.month, false)}</text></g>`;
-  }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Income and spending, last 6 months"><line x1="${pad}" x2="${W - pad}" y1="${H - 24}" y2="${H - 24}" stroke="var(--line)"/>${bars}</svg>
-    <div class="legend"><span><span class="dot" style="background:var(--accent)"></span> Income</span><span><span class="dot" style="background:var(--warn)"></span> Spending</span></div>`;
+const smoothLine=(points)=>{
+  if(!points.length)return '';
+  let s=`M${points[0][0].toFixed(1)},${points[0][1].toFixed(1)}`;
+  for(let i=1;i<points.length;i++){const [x0,y0]=points[i-1],[x1,y1]=points[i],xm=(x0+x1)/2;s+=` C${xm.toFixed(1)},${y0.toFixed(1)} ${xm.toFixed(1)},${y1.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;}
+  return s;
+};
+function trendChart(trend){
+  const W=520,H=190,p=28,base=H-26,max=Math.max(1,...trend.flatMap(t=>[t.income,t.expense]));
+  if(!trend.length)return '<p class="muted small">No cashflow data yet.</p>';
+  const pts=key=>trend.map((t,i)=>[p+i*(W-p*2)/Math.max(trend.length-1,1),base-(H-60)*t[key]/max]);
+  const inc=pts('income'),spent=pts('expense'),line=smoothLine(inc),low=smoothLine(spent);
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Income (solid) and spending (dashed) over the last six months">
+    <defs><linearGradient id="cashflow-gradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--text)" stop-opacity=".16"/><stop offset="100%" stop-color="var(--text)" stop-opacity="0"/></linearGradient></defs>
+    <line class="cashflow-axis" x1="${p}" y1="${base}" x2="${W-p}" y2="${base}"/>
+    <path d="${line} L${inc[inc.length-1][0].toFixed(1)},${base} L${inc[0][0].toFixed(1)},${base} Z" fill="url(#cashflow-gradient)"/>
+    <path class="cashflow-line" d="${line}"/><path class="cashflow-muted" d="${low}"/>
+    ${trend.map((t,i)=>`<text x="${inc[i][0]}" y="${H-6}" text-anchor="middle">${fmonth(t.month,false)}</text>`).join('')}
+  </svg><div class="legend"><span>━ Income</span><span>┄ Spending</span></div>`;
 }
-function paceChart(daily) {
-  const W = 520, H = 170, p = 26, n = daily.days;
-  const max = Math.max(1, ...daily.current.filter((v) => v != null), ...daily.previous);
-  const X = (i) => p + (i * (W - p * 2)) / Math.max(n - 1, 1), Y = (v) => H - 22 - ((H - 44) * v) / max;
-  const path = (a) => a.map((v, i) => (v == null ? '' : `${i && a[i - 1] != null ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`)).join(' ');
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative spending this month versus last month"><line x1="${p}" x2="${W - p}" y1="${H - 22}" y2="${H - 22}" stroke="var(--line)"/>
-    <path d="${path(daily.previous)}" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="4 4" opacity=".7"/><path d="${path(daily.current)}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
-    <text x="${p}" y="${H - 5}">1</text><text x="${W - p}" y="${H - 5}" text-anchor="end">${n}</text></svg>
-    <div class="legend"><span><span class="dot" style="background:var(--accent)"></span> This month</span><span><span class="dot" style="background:var(--muted)"></span> Last month</span></div>`;
+function paceChart(daily){
+  const W=520,H=170,p=26,n=daily.days,max=Math.max(1,...daily.current.filter(v=>v!=null),...daily.previous);
+  const X=i=>p+i*(W-2*p)/Math.max(n-1,1),Y=v=>H-22-(H-44)*v/max;
+  const pts=a=>a.map((v,i)=>v==null?null:[X(i),Y(v)]);
+  const groups=a=>{let g=[],curr=[];for(const point of pts(a)){if(!point){if(curr.length)g.push(curr);curr=[];}else curr.push(point);}if(curr.length)g.push(curr);return g;};
+  const current=groups(daily.current),previous=groups(daily.previous);
+  const currentPaths=current.map(smoothLine),priorPaths=previous.map(smoothLine);
+  const base=H-22;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative spending this month (solid) versus last month (dashed)">
+    <defs><linearGradient id="pace-gradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--text)" stop-opacity=".13"/><stop offset="100%" stop-color="var(--text)" stop-opacity="0"/></linearGradient></defs>
+    <line class="cashflow-axis" x1="${p}" x2="${W-p}" y1="${base}" y2="${base}"/>
+    ${current.map((g,i)=>`<path d="${currentPaths[i]} L${g[g.length-1][0].toFixed(1)},${base} L${g[0][0].toFixed(1)},${base} Z" fill="url(#pace-gradient)"/>`).join('')}
+    ${priorPaths.map(d=>`<path class="cashflow-muted" d="${d}"/>`).join('')}
+    ${currentPaths.map(d=>`<path class="cashflow-line" d="${d}"/>`).join('')}
+    <text x="${p}" y="${H-5}">1</text><text x="${W-p}" y="${H-5}" text-anchor="end">${n}</text>
+  </svg><div class="legend"><span>━ This month</span><span>┄ Last month</span></div>`;
 }
 const delta = (cur, prev, goodWhenUp) => {
   if (!prev) return '';
   const d = cur - prev, pct = Math.round((100 * Math.abs(d)) / Math.abs(prev));
   if (!pct) return '<div class="delta muted">Same as last month</div>';
-  const good = goodWhenUp ? d > 0 : d < 0;
-  return `<div class="delta ${good ? 'pos' : 'neg'}">${d > 0 ? '▲' : '▼'} ${pct}% vs last month</div>`;
+  return `<div class="delta muted">${d > 0 ? '▲' : '▼'} ${pct}% vs last month</div>`;
 };
 
 /* ---------- dashboard ---------- */
@@ -54,12 +71,12 @@ routes.dashboard = async (main, [month]) => {
     ${unc.count ? `<div class="card flat row" style="justify-content:space-between;margin-bottom:16px;background:var(--accent-soft)"><div><b>${unc.count} transaction${unc.count > 1 ? 's' : ''} to review</b><div class="small muted">Totals are estimates until each one has a category.</div></div><a class="btn primary" href="#/review">Continue reviewing</a></div>` : ''}
     ${d.duplicates ? `<div class="warn-box row" style="justify-content:space-between"><span>${d.duplicates} possible duplicate${d.duplicates > 1 ? 's' : ''} left out of totals.</span><a href="#/transactions/duplicates">Check them</a></div>` : ''}
     <div class="grid g3" style="margin-bottom:16px">
-      <div class="card stat"><div class="label">Income</div><div class="value pos">${money(d.income_minor)}</div>${delta(d.income_minor, d.prev.income_minor, true)}</div>
-      <div class="card stat"><div class="label">Spent</div><div class="value">${money(d.expense_minor)}</div>${delta(d.expense_minor, d.prev.expense_minor, false)}</div>
-      <div class="card stat"><div class="label">Net savings</div><div class="value ${d.net_minor < 0 ? 'neg' : 'pos'}">${money(d.net_minor, { sign: true })}</div><div class="delta muted">${d.income_minor > 0 ? Math.round((100 * d.net_minor) / d.income_minor) + '% of income' : '&nbsp;'}${d.saved_minor ? ' · ' + money(d.saved_minor) + ' put into savings' : ''}</div></div></div>
-    ${d.insights.length ? `<div class="card" style="margin-bottom:16px"><h2 style="margin-bottom:8px">Insights</h2><div class="list">${d.insights.map((x) => `<div><span class="dot" style="background:${x.tone === 'warn' ? 'var(--warn)' : x.tone === 'good' ? 'var(--good)' : 'var(--muted)'}"></span><div class="grow">${esc(x.text)}</div></div>`).join('')}</div></div>` : ''}
+      <div class="card stat"><div class="label">Income</div><div class="value amount-in">↑ +${money(d.income_minor)}</div>${delta(d.income_minor, d.prev.income_minor, true)}</div>
+      <div class="card stat"><div class="label">Spent</div><div class="value amount-out">↓ −${money(d.expense_minor)}</div>${delta(d.expense_minor, d.prev.expense_minor, false)}</div>
+      <div class="card stat"><div class="label">Net savings</div><div class="value ${d.net_minor < 0 ? 'amount-out' : 'amount-in'}">${money(d.net_minor, { sign: true })}</div><div class="delta muted">${d.income_minor > 0 ? Math.round((100 * d.net_minor) / d.income_minor) + '% of income' : '&nbsp;'}${d.saved_minor ? ' · ' + money(d.saved_minor) + ' put into savings' : ''}</div></div></div>
+    ${d.insights.length ? `<div class="card" style="margin-bottom:16px"><h2 style="margin-bottom:8px">Insights</h2><div class="list">${d.insights.map((x) => `<div><span class="dot" style="background:var(--shade-3)"></span><div class="grow">${esc(x.text)}</div></div>`).join('')}</div></div>` : ''}
     <div class="grid g-main" style="margin-bottom:16px">
-      <div class="card"><h2 style="margin-bottom:14px">Where it went</h2>${d.breakdown.length ? `<div class="donut-wrap">${donut(d.breakdown, d.expense_minor || 1)}<div class="grow list" style="flex:1;min-width:200px">${d.breakdown.slice(0, 8).map((b) => `<a class="row" href="#/transactions/cat-${b.category_id ?? 'uncategorized'}-${d.month}" style="text-decoration:none;color:inherit"><span class="dot" style="background:${esc(b.color)}"></span><span class="grow ell">${esc(b.name)}</span><span class="muted small">${b.pct}%</span><b class="num">${money(b.amount_minor)}</b></a>`).join('')}</div></div>` : '<p class="muted">No spending in this month.</p>'}</div>
+      <div class="card"><h2 style="margin-bottom:14px">Where it went</h2>${d.breakdown.length ? `<div class="donut-wrap">${donut(d.breakdown, d.expense_minor || 1)}<div class="grow list" style="flex:1;min-width:200px">${d.breakdown.slice(0, 8).map((b) => `<a class="row" href="#/transactions/cat-${b.category_id ?? 'uncategorized'}-${d.month}" style="text-decoration:none;color:inherit"><span class="dot" style="background:var(--shade-${d.breakdown.indexOf(b)%6})"></span><span class="grow ell">${esc(b.name)}</span><span class="muted small">${b.pct}%</span><b class="num">${money(b.amount_minor)}</b></a>`).join('')}</div></div>` : '<p class="muted">No spending in this month.</p>'}</div>
       <div class="card"><h2 style="margin-bottom:6px">Pace</h2><p class="small muted" style="margin-bottom:10px">Cumulative spending through the month</p><div class="chart">${paceChart(d.daily)}</div></div></div>
     <div class="grid g2" style="margin-bottom:16px">
       <div class="card"><h2 style="margin-bottom:6px">Last 6 months</h2><div class="chart">${trendChart(d.trend)}</div></div>
@@ -76,15 +93,15 @@ routes.dashboard = async (main, [month]) => {
 function txnRow(t) {
   const inflow = t.direction === 'credit', c = t.is_split ? 'Split' : t.category_name;
   return `<div class="txn" data-txn="${t.id}" tabindex="0" role="button">
-    <span class="dot" style="background:${esc(t.category_color || '#C9C4BA')};width:12px;height:12px"></span>
+    <span class="dot" style="background:var(--shade-3);width:12px;height:12px"></span>
     <div class="grow"><div class="ell"><b>${esc(t.merchant || t.description.slice(0, 40) || 'Unknown')}</b>${t.dup_status === 'suspected' ? ' <span class="pill warn">Possible duplicate</span>' : ''}</div>
       <div class="small muted ell">${fdate(t.date, false)} · ${esc(c || (t.status === 'skipped' ? 'Skipped' : 'Needs a category'))}${t.type === 'transfer' ? ' · Transfer' : ''}${t.recurring ? ' · ↻' : ''}</div></div>
-    <b class="num ${t.type === 'transfer' ? 'muted' : inflow ? 'pos' : ''}">${inflow ? '+' : ''}${money(t.amount_minor)}</b></div>`;
+    <b class="num ${t.type === 'transfer' ? 'muted' : inflow ? 'amount-in' : 'amount-out'}">${inflow ? '↑ +' : '↓ −'}${money(t.amount_minor)}</b></div>`;
 }
 function budgetBars(b, compact) {
   const rows = [...(b.overall ? [{ category_name: 'All spending', category_color: 'var(--accent)', ...b.overall }] : []), ...b.items];
   if (!rows.length) return `<p class="muted small">Set monthly limits to see progress here. ${compact ? '<a href="#/plan">Add a budget</a>' : ''}</p>`;
-  return `<div class="list">${rows.slice(0, compact ? 5 : 99).map((r) => `<div style="display:block"><div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="row" style="gap:8px"><span class="dot" style="background:${esc(r.category_color)}"></span><b>${esc(r.category_name)}</b></span><span class="small ${r.pct >= 100 ? 'neg' : 'muted'}">${money(r.spent_minor)} of ${money(r.limit_minor)}</span></div><div class="bar ${r.pct >= 100 ? 'bad' : r.pct >= 80 ? 'warn' : ''}"><i style="width:${Math.min(r.pct, 100)}%"></i></div></div>`).join('')}</div>`;
+  return `<div class="list">${rows.slice(0, compact ? 5 : 99).map((r) => `<div style="display:block"><div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="row" style="gap:8px"><span class="dot" style="background:var(--shade-3)"></span><b>${esc(r.category_name)}</b></span><span class="small ${r.pct >= 100 ? 'neg' : 'muted'}">${money(r.spent_minor)} of ${money(r.limit_minor)}</span></div><div class="bar ${r.pct >= 100 ? 'bad' : r.pct >= 80 ? 'warn' : ''}"><i style="width:${Math.min(r.pct, 100)}%"></i></div></div>`).join('')}</div>`;
 }
 
 /* ---------- transaction editor (used from dashboard + history) ---------- */
@@ -342,7 +359,7 @@ routes.settings = async (main) => {
   $('#out').onclick = async () => { await api('/auth/logout', { method: 'POST' }); S.user = null; renderAuth(); };
   const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
   $$('#theme button').forEach((b) => { b.classList.toggle('on', b.dataset.t === cur); b.onclick = () => { document.documentElement.dataset.theme = b.dataset.t; try { localStorage.setItem('spendflow-theme', b.dataset.t); } catch { /* */ } $$('#theme button').forEach((x) => x.classList.toggle('on', x === b)); }; });
-  $('#addc').onclick = () => { const m = modal(`<h2>New category</h2><div id="nerr"></div><div class="field"><label for="cn">Name</label><input id="cn" maxlength="40"></div><div class="field"><label for="ck">Type</label><select id="ck"><option value="expense">Spending</option><option value="income">Income</option><option value="savings">Savings</option></select></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="cgo">Create</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#cgo', m.el).onclick = async () => { try { await api('/categories', { method: 'POST', body: { name: $('#cn', m.el).value, kind: $('#ck', m.el).value, color: '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0') } }); m.close(); route(); } catch (e) { $('#nerr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } }; };
+  $('#addc').onclick = () => { const m = modal(`<h2>New category</h2><div id="nerr"></div><div class="field"><label for="cn">Name</label><input id="cn" maxlength="40"></div><div class="field"><label for="ck">Type</label><select id="ck"><option value="expense">Spending</option><option value="income">Income</option><option value="savings">Savings</option></select></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="cgo">Create</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#cgo', m.el).onclick = async () => { try { await api('/categories', { method: 'POST', body: { name: $('#cn', m.el).value, kind: $('#ck', m.el).value, color: '#71717A' } }); m.close(); route(); } catch (e) { $('#nerr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } }; };
   $('#wipe').onclick = async () => { if (await confirmBox({ title: 'Delete all statements and transactions?', body: 'This removes every uploaded file and every transaction. Your account, categories, budgets and goals stay. This can’t be undone.', ok: 'Delete everything', danger: true, typed: 'DELETE' })) { try { await api('/data/wipe', { method: 'POST', body: { confirm: 'DELETE' } }); toast('All statements and transactions deleted'); refreshBadge(); route(); } catch (e) { fail(e); } } };
   $('#delacc').onclick = () => { const m = modal(`<h2>Delete your account?</h2><p class="muted">This permanently deletes your account, all transactions, uploaded files, budgets and goals. Enter your password to confirm.</p><div id="derr"></div><div class="field" style="margin-top:14px"><label for="dpw">Password</label><input id="dpw" type="password" autocomplete="current-password"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="dgo" style="background:var(--bad)">Delete account</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#dgo', m.el).onclick = async () => { try { await api('/auth/delete-account', { method: 'POST', body: { password: $('#dpw', m.el).value } }); m.close(); S.user = null; renderAuth(); } catch (e) { $('#derr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } }; };
   main.onclick = async (e) => {
