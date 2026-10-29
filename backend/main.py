@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import sqlite3
 import hashlib
 import io
 import json
@@ -17,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analytics, importing, ledger, parse_llm, txns
+from . import analytics, importing, ledger, parse_llm, txns, people
 from .auth import (EMAIL_RE, clear_throttle, current_user, end_session, hash_password, require_csrf,
                    start_session, throttle, verify_password, redeem_password_reset, update_password, issue_password_reset, mail_recovery_available, send_password_reset_email)
 from .config import (CURRENCY, FRONTEND_DIR, LOCALE, MAX_FILES_PER_IMPORT, MAX_UPLOAD_BYTES, UPLOAD_DIR)
@@ -212,6 +213,76 @@ def wipe_data(b: Confirm, user=Depends(current_user), db=Depends(get_db)):
     _delete_files(uid)
     return {"ok": True}
 
+
+# ================================================================ People & Loans
+class PersonIn(BaseModel):
+    name: str = Field(min_length=1,max_length=80)
+
+class UpiAliasIn(BaseModel):
+    upi_id: str = Field(min_length=5,max_length=150)
+
+class PersonLinkIn(BaseModel):
+    txn_id: int
+    role: str
+
+@app.get("/api/people")
+def list_people(user=Depends(current_user),db=Depends(get_db)):
+    return people.overview(db,user["id"])
+
+@app.post("/api/people")
+def create_person(b:PersonIn,user=Depends(current_user),db=Depends(get_db)):
+    name=b.name.strip()
+    if not name: raise ValueError("Name required")
+    cur=db.execute("INSERT INTO people(user_id,name) VALUES(?,?)",(user["id"],name))
+    db.commit()
+    return {"id":cur.lastrowid,"name":name}
+
+@app.patch("/api/people/{pid}")
+def rename_person(pid:int,b:PersonIn,user=Depends(current_user),db=Depends(get_db)):
+    people.own(db,user["id"],pid)
+    if not b.name.strip(): raise ValueError("Name required")
+    db.execute("UPDATE people SET name=? WHERE id=?",(b.name.strip(),pid));db.commit()
+    return {"ok":True}
+
+@app.post("/api/people/{pid}/upi")
+def add_person_upi(pid:int,b:UpiAliasIn,user=Depends(current_user),db=Depends(get_db)):
+    people.own(db,user["id"],pid)
+    upi=b.upi_id.strip().lower()
+    if people.upi_ids(upi)!=[upi]: raise ValueError("Enter a valid UPI ID")
+    try: db.execute("INSERT INTO people_upi(user_id,person_id,upi_id) VALUES(?,?,?)",(user["id"],pid,upi))
+    except sqlite3.IntegrityError: raise ValueError("UPI ID is already linked to someone. Unlink it first.")
+    db.commit();return {"ok":True}
+
+@app.delete("/api/people/{pid}/upi/{alias_id}")
+def remove_person_upi(pid:int,alias_id:int,user=Depends(current_user),db=Depends(get_db)):
+    people.own(db,user["id"],pid)
+    n=db.execute("DELETE FROM people_upi WHERE user_id=? AND person_id=? AND id=?",(user["id"],pid,alias_id)).rowcount
+    if not n: raise LookupError("UPI ID not found.")
+    db.commit();return {"ok":True}
+
+@app.get("/api/people/transaction/{tid}/suggestions")
+def person_suggestions(tid:int,user=Depends(current_user),db=Depends(get_db)):
+    return people.suggestions(db,user["id"],tid)
+
+@app.post("/api/people/{pid}/transactions")
+def link_person_transaction(pid:int,b:PersonLinkIn,user=Depends(current_user),db=Depends(get_db)):
+    people.link(db,user["id"],pid,b.txn_id,b.role);db.commit()
+    return {"ok":True}
+
+@app.delete("/api/people/{pid}/transactions/{tid}")
+def unlink_person_transaction(pid:int,tid:int,user=Depends(current_user),db=Depends(get_db)):
+    people.own(db,user["id"],pid)
+    row=db.execute("SELECT 1 FROM people_transactions WHERE user_id=? AND person_id=? AND txn_id=?",(user["id"],pid,tid)).fetchone()
+    if not row: raise LookupError("Not linked to this person")
+    people.unlink(db,user["id"],tid);db.commit();return {"ok":True}
+
+@app.delete("/api/people/{pid}")
+def delete_person(pid:int,user=Depends(current_user),db=Depends(get_db)):
+    people.own(db,user["id"],pid)
+    ids=[r["txn_id"] for r in db.execute("SELECT txn_id FROM people_transactions WHERE user_id=? AND person_id=?",(user["id"],pid))]
+    for tid in ids: people.unlink(db,user["id"],tid)
+    db.execute("DELETE FROM people WHERE id=? AND user_id=?",(pid,user["id"]));db.commit()
+    return {"ok":True}
 
 # ================================================================ accounts
 
