@@ -29,8 +29,19 @@ def create_statement(db, user_id: int, account_id: int, filename: str, stored_pa
         "VALUES(?,?,?,?,?,?,?,?,'preview',?)",
         (user_id, account_id, filename, stored_path, sha, mime, res.source_type, res.parser, json.dumps(res.warnings)))
     sid = cur.lastrowid
-    for r in res.rows:
-        insert_staged_row(db, user_id, account_id, sid, r)
+    # One batched DB operation rather than hundreds of network round trips.
+    # Keep insert_staged_row() for manual preview-row edits (which need lastrowid).
+    params = [
+        (user_id, account_id, sid, r["date"], r.get("time"), r["amount_minor"],
+         r["direction"], "income" if r["direction"] == "credit" else "expense",
+         r.get("merchant", ""), r.get("merchant_key", ""), r.get("description", ""),
+         r.get("ref"), r.get("balance_minor"), json.dumps(r.get("flags", [])))
+        for r in res.rows
+    ]
+    db.executemany(
+        "INSERT INTO transactions(user_id,account_id,statement_id,date,time,amount_minor,direction,type,"
+        "merchant,merchant_key,description,ref,balance_minor,status,flags) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'staged',?)", params)
     mark_duplicates(db, user_id, sid)
     refresh_statement_meta(db, sid)
     return sid
