@@ -139,7 +139,7 @@ routes.review = async (main) => {
     } catch (e) { card && card.classList.remove('out-r'); fail(e); }
     busy = false;
   }
-  function resetOpts() { opts = { note: '', recurring: false, similar: opts.similar, remember: false, showNote: false }; typeOverride = null; }
+  function resetOpts() { opts = { note: '', recurring: false, similar: false, remember: false, showNote: false }; typeOverride = null; }
 
   async function skip() {
     if (busy || !state.item) return;
@@ -147,6 +147,7 @@ routes.review = async (main) => {
     const card = $('#card'); card && card.classList.add('out-l');
     try {
       const r = await api(`/review/${state.item.txn.id}/skip?scope=${scope}&order=${order}`, { method: 'POST' });
+      selectedTagIds = [];
       lastUndo = r.undo; state = { item: r.item, progress: r.progress }; resetOpts(); setTimeout(draw, 160);
     } catch (e) { card && card.classList.remove('out-l'); fail(e); }
     busy = false;
@@ -203,7 +204,7 @@ routes.review = async (main) => {
       <div class="grid">${['income', 'expense', 'transfer'].map((k) => `<button class="btn" data-k="${k}"><b>${typeLabel[k]}</b></button>`).join('')}</div>`);
     $$('[data-k]', m.el).forEach((b) => (b.onclick = () => {
       typeOverride = b.dataset.k; m.close();
-      if (typeOverride === 'transfer') { const tc = S.cats.find((c) => c.kind === 'transfer'); if (tc) submit({ category_id: tc.id }); } else draw();
+      draw();
     }));
   }
 
