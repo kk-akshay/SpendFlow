@@ -132,30 +132,44 @@ function renderAuth(mode = 'login') {
 
 /* ---------- password recovery ---------- */
 function renderPasswordReset() {
-  $('#app').innerHTML = `<div class="auth"><form class="card" id="reset-form">
+  $('#app').innerHTML = `<div class="auth"><div class="card">
     <div class="brand" style="padding:0 0 18px"><i></i>SpendFlow</div>
-    <h1 style="font-size:22px">Reset password</h1>
-    <p class="muted small" style="margin:8px 0 18px">On the computer running SpendFlow, run <code>python3 -m backend.reset_password_code</code> to generate a one-time code. It expires after 15 minutes.</p>
-    <div id="reset-error" role="alert"></div>
-    <div class="field"><label for="reset-code">One-time reset code</label><input id="reset-code" required autocomplete="off"></div>
-    <div class="field"><label for="reset-pass">New password</label><input id="reset-pass" type="password" required minlength="12" autocomplete="new-password"></div>
-    <div class="field"><label for="reset-confirm">Confirm new password</label><input id="reset-confirm" type="password" required minlength="12" autocomplete="new-password"></div>
-    <button class="btn primary" style="width:100%" id="reset-submit">Reset password</button>
+    <h1 style="font-size:22px">Forgot password?</h1>
+    <p class="muted small" style="margin:8px 0 18px">Enter your registered email address to receive a 15-minute recovery code.</p>
+    <form id="request-reset">
+      <div class="field"><label for="recovery-email">Email</label><input id="recovery-email" type="email" autocomplete="email" required></div>
+      <button class="btn primary" id="send-code" style="width:100%">Send reset code</button>
+    </form>
+    <div id="recovery-status" role="status" style="margin-top:12px"></div>
+    <form id="reset-form" style="margin-top:16px">
+      <div class="field"><label for="reset-code">Code received by email</label><input id="reset-code" autocomplete="one-time-code" required></div>
+      <div class="field"><label for="reset-pass">New password (12+ characters)</label><input id="reset-pass" type="password" required minlength="12" autocomplete="new-password"></div>
+      <div class="field"><label for="reset-confirm">Confirm new password</label><input id="reset-confirm" type="password" required minlength="12" autocomplete="new-password"></div>
+      <button class="btn primary" style="width:100%" id="reset-submit">Reset password</button>
+    </form>
     <p class="small muted" style="text-align:center;margin-top:14px"><a href="#" id="reset-back">Back to sign in</a></p>
-  </form></div>`;
+  </div></div>`;
   $('#reset-back').onclick = e => { e.preventDefault(); renderAuth('login'); };
+  $('#request-reset').onsubmit = async e => {
+    e.preventDefault();
+    const btn = $('#send-code'); btn.disabled = true;
+    try {
+      const result = await api('/auth/forgot-password',{method:'POST',body:{email:$('#recovery-email').value}});
+      $('#recovery-status').innerHTML = `<p class="small muted">${esc(result.message)}</p>`;
+    } catch(err) { $('#recovery-status').innerHTML = `<div class="err-box">${esc(err.message)}</div>`; }
+    finally { btn.disabled = false; }
+  };
   $('#reset-form').onsubmit = async e => {
     e.preventDefault();
     const password = $('#reset-pass').value;
     if (password !== $('#reset-confirm').value) {
-      $('#reset-error').innerHTML = '<div class="err-box">Passwords do not match.</div>';
-      return;
+      $('#recovery-status').innerHTML = '<div class="err-box">Passwords do not match.</div>'; return;
     }
-    const b = $('#reset-submit'); b.disabled = true;
+    const btn = $('#reset-submit'); btn.disabled = true;
     try {
       await api('/auth/reset-password', {method:'POST', body:{token:$('#reset-code').value.trim(),new_password:password}});
       renderAuth('login'); toast('Password updated. Please sign in.');
-    } catch (err) { $('#reset-error').innerHTML = `<div class="err-box">${esc(err.message)}</div>`; b.disabled = false; }
+    } catch(err) { $('#recovery-status').innerHTML = `<div class="err-box">${esc(err.message)}</div>`; btn.disabled = false; }
   };
 }
 

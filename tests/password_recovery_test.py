@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.db import connect
 from backend.auth import issue_password_reset
+from unittest.mock import patch
 
 headers = {"x-requested-with": "spendflow"}
 client = TestClient(app, headers=headers)
@@ -29,6 +30,20 @@ try:
     assert db.execute("SELECT COUNT(*) FROM password_reset_tokens").fetchone()[0] == 1
 finally:
     db.close()
+
+# Browser email endpoint is safely disabled when SMTP is not configured.
+assert client.post("/api/auth/forgot-password",json={"email":email}).status_code == 503
+
+# With a configured mail transport, a code is delivered only for a known account.
+sent=[]
+def capture(recipient, code):
+    sent.append((recipient,code))
+with patch("backend.main.mail_recovery_available", return_value=True), patch("backend.main.send_password_reset_email", side_effect=capture):
+    assert client.post("/api/auth/forgot-password",json={"email":"missing@example.com"}).status_code == 200
+    assert sent == []
+    assert client.post("/api/auth/forgot-password",json={"email":email}).status_code == 200
+    assert len(sent)==1 and sent[0][0]==email
+    token=sent[0][1]
 
 # Wrong token does not change the password.
 assert client.post("/api/auth/reset-password",json={"token":"invalid","new_password":new}).status_code == 400
