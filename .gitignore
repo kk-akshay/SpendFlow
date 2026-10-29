@@ -1,0 +1,35 @@
+# SpendFlow/Tally runtime state. Never commit real user financial data.
+/data/*
+!/data/.gitkeep
+
+# SQLite databases, WAL/SHM journals, and backups anywhere in the project
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+
+# Uploaded bank statements and other private generated user files
+**/uploads/
+**/uploaded/
+**/statements/
+**/exports/
+**/backups/
+**/user_data/
+**/user-data/
+
+# Local credentials; intentionally keep shareable templates
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Python bytecode and disposable runtime output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
