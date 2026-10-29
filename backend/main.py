@@ -31,6 +31,13 @@ from .statement_parser import parse_file
 init_db()
 app = FastAPI(title="SpendFlow", docs_url=None, redoc_url=None, dependencies=[Depends(require_csrf)])
 
+@app.on_event("startup")
+def _recover_incomplete_imports():
+    # A restarted process cannot resume work from a terminated thread.
+    from .import_jobs import recover_interrupted_jobs
+    recover_interrupted_jobs()
+
+
 
 @app.exception_handler(RequestValidationError)
 async def _validation(_: Request, exc: RequestValidationError):
