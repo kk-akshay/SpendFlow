@@ -1,4 +1,4 @@
-"""Tally API + static frontend."""
+"""SpendFlow API + static frontend."""
 from __future__ import annotations
 
 import csv
@@ -28,7 +28,7 @@ from .parse_common import parse_date
 from .statement_parser import parse_file
 
 init_db()
-app = FastAPI(title="Tally", docs_url=None, redoc_url=None, dependencies=[Depends(require_csrf)])
+app = FastAPI(title="SpendFlow", docs_url=None, redoc_url=None, dependencies=[Depends(require_csrf)])
 
 
 @app.exception_handler(RequestValidationError)
@@ -120,7 +120,7 @@ def delete_account(b: DeleteAccount, response: Response, user=Depends(current_us
     db.execute("DELETE FROM users WHERE id=?", (user["id"],))
     db.commit()
     _delete_files(user["id"])
-    response.delete_cookie("tally_session", path="/")
+    response.delete_cookie("spendflow_session", path="/")
     return {"ok": True}
 
 
@@ -616,7 +616,7 @@ def list_transactions(request: Request, user=Depends(current_user), db=Depends(g
 @app.get("/api/transactions/{txn_id}")
 def get_transaction(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
     t = txns.get_txn(db, user["id"], txn_id)
-    if not t:
+    if not t or t.get("removed_at"):
         raise LookupError("Transaction not found.")
     return {"txn": t, "suggestion": txns.suggest(db, user["id"], t)}
 
@@ -634,6 +634,7 @@ class TxnEdit(BaseModel):
     direction: str | None = None
     send_to_review: bool = False
     remember: bool = False
+    remember: bool = False
 
 
 @app.patch("/api/transactions/{txn_id}")
@@ -649,7 +650,7 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         undo = txns.bulk(db, uid, [txn_id], "pending", {})["undo"]
         return {"txn": txns.get_txn(db, uid, txn_id), "undo": undo}
 
-    if db.execute("SELECT 1 FROM transaction_group_members WHERE txn_id=?", (txn_id,)).fetchone() and (
+    if db.execute("SELECT 1 FROM (SELECT txn_id FROM transaction_group_members UNION ALL SELECT txn_id FROM flow_group_members) WHERE txn_id=?", (txn_id,)).fetchone() and (
         ("category_id" in body and body["category_id"] != row["category_id"]) or body.get("splits") or
         ("type" in body and body["type"] != row["type"]) or
         ("direction" in body and body["direction"] != row["direction"]) or
@@ -680,7 +681,7 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         db.execute(f"UPDATE transactions SET {', '.join(f'{k}=?' for k in vals)} WHERE id=?", [*vals.values(), txn_id])
 
     if "category_id" in body or body.get("splits"):
-        payload = {k: body[k] for k in ("category_id", "splits", "note", "recurring", "recurring_freq", "type") if k in body}
+        payload = {k: body[k] for k in ("category_id", "splits", "note", "recurring", "recurring_freq", "type", "remember") if k in body}
         res = txns.apply_category(db, uid, txn_id, payload)
         undo = (undo + res["undo"]) if undo else res["undo"]
     else:
@@ -730,8 +731,7 @@ def restore_transactions(b: RestoreIn, user=Depends(current_user), db=Depends(ge
 def delete_transaction(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
     if not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=?", (txn_id, user["id"])).fetchone():
         raise LookupError("Transaction not found.")
-    db.execute("UPDATE transactions SET transfer_pair_id=NULL WHERE transfer_pair_id=?", (txn_id,))
-    db.execute("DELETE FROM transactions WHERE id=?", (txn_id,))
+    db.execute("UPDATE transactions SET removed_at=datetime('now') WHERE id=? AND user_id=?", (txn_id, user["id"]))
     db.commit()
     return {"ok": True}
 
@@ -760,7 +760,7 @@ def export_csv(user=Depends(current_user), db=Depends(get_db)):
             yield buf.getvalue()
 
     return StreamingResponse(gen(), media_type="text/csv",
-                             headers={"Content-Disposition": 'attachment; filename="tally-transactions.csv"'})
+                             headers={"Content-Disposition": 'attachment; filename="spendflow-transactions.csv"'})
 
 
 
@@ -774,8 +774,8 @@ def exclude_transaction(txn_id: int, b: ExclusionIn, user=Depends(current_user),
     if not b.confirmed:
         raise HTTPException(400, "Confirm the exclusion rule before saving.")
     ledger.save_exclusion(db, user["id"], txn_id)
-    db.execute("UPDATE transactions SET transfer_pair_id=NULL WHERE user_id=? AND transfer_pair_id=?", (user["id"], txn_id))
-    db.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (txn_id, user["id"]))
+    # Preserve the original imported financial record; hide it without altering its bank balance.
+    db.execute("UPDATE transactions SET removed_at=datetime('now') WHERE id=? AND user_id=?", (txn_id, user["id"]))
     db.commit()
     return {"ok": True}
 
@@ -868,6 +868,68 @@ def add_transaction(b: ManualTxn, user=Depends(current_user), db=Depends(get_db)
     db.commit()
     return {"txn":txns.get_txn(db,uid,cur.lastrowid)}
 
+
+
+# ================================================================ saved rules and recoverable removals
+
+class ExcludeIn(BaseModel):
+    transaction_id: int
+
+@app.get("/api/exclusions")
+def exclusions(user=Depends(current_user), db=Depends(get_db)):
+    return [dict(r) for r in db.execute("SELECT e.*, a.name AS account_name FROM exclusion_rules e JOIN accounts a ON a.id=e.account_id WHERE e.user_id=? ORDER BY e.id DESC", (user["id"],))]
+
+@app.post("/api/exclusions")
+def add_exclusion(b: ExcludeIn, user=Depends(current_user), db=Depends(get_db)):
+    t = db.execute("SELECT * FROM transactions WHERE user_id=? AND id=? AND status!='staged'", (user["id"],b.transaction_id)).fetchone()
+    if not t or len(t["merchant_key"]) < 3:
+        raise ValueError("Choose a transaction with a distinct merchant before creating an exclusion.")
+    db.execute("INSERT OR IGNORE INTO exclusion_rules(user_id,account_id,merchant_key,direction,amount_minor) VALUES(?,?,?,?,?)", (user["id"],t["account_id"],t["merchant_key"],t["direction"],t["amount_minor"]))
+    db.execute("UPDATE transactions SET removed_at=datetime('now') WHERE id=?", (b.transaction_id,))
+    db.commit()
+    return {"ok": True}
+
+@app.delete("/api/exclusions/{rule_id}")
+def delete_exclusion(rule_id: int, user=Depends(current_user), db=Depends(get_db)):
+    if not db.execute("SELECT 1 FROM exclusion_rules WHERE id=? AND user_id=?", (rule_id,user["id"])).fetchone():
+        raise LookupError("Rule not found")
+    db.execute("DELETE FROM exclusion_rules WHERE id=? AND user_id=?", (rule_id,user["id"]))
+    db.commit()
+    return {"ok": True}
+
+@app.get("/api/classification-rules")
+def classification_rules(user=Depends(current_user), db=Depends(get_db)):
+    return [dict(r) for r in db.execute("SELECT r.*,c.name AS category_name FROM classification_rules r JOIN categories c ON c.id=r.category_id WHERE r.user_id=? ORDER BY r.id DESC", (user["id"],))]
+
+class RuleEdit(BaseModel):
+    category_id: int
+    type: str
+
+@app.patch("/api/classification-rules/{rule_id}")
+def edit_classification_rule(rule_id: int, b: RuleEdit, user=Depends(current_user), db=Depends(get_db)):
+    if b.type not in txns.TYPES or not txns.get_category(db,user["id"],b.category_id):
+        raise ValueError("Choose a valid type and category")
+    result=db.execute("UPDATE classification_rules SET category_id=?,type=? WHERE id=? AND user_id=?", (b.category_id,b.type,rule_id,user["id"]))
+    if not result.rowcount:
+        raise LookupError("Rule not found")
+    db.commit()
+    return {"ok":True}
+
+@app.delete("/api/classification-rules/{rule_id}")
+def delete_classification_rule(rule_id: int, user=Depends(current_user), db=Depends(get_db)):
+    result=db.execute("DELETE FROM classification_rules WHERE id=? AND user_id=?", (rule_id,user["id"]))
+    if not result.rowcount:
+        raise LookupError("Rule not found")
+    db.commit()
+    return {"ok":True}
+
+@app.post("/api/transactions/{txn_id}/restore")
+def restore_removed_transaction(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    result=db.execute("UPDATE transactions SET removed_at=NULL, excluded_rule_id=NULL WHERE id=? AND user_id=?", (txn_id,user["id"]))
+    if not result.rowcount:
+        raise LookupError("Transaction not found")
+    db.commit()
+    return {"ok":True}
 
 # ================================================================ dashboard, budgets, goals, recurring
 
@@ -990,6 +1052,62 @@ def stop_recurring(b: RecurringIn, user=Depends(current_user), db=Depends(get_db
     db.commit()
     return {"ok": True}
 
+
+
+# ================================================================ linked non-personal flows
+
+class FlowIn(BaseModel):
+    kind: str
+    transaction_ids: list[int]
+
+@app.get("/api/flows/suggestions/{txn_id}")
+def flow_suggestions(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    t=db.execute("SELECT * FROM transactions WHERE id=? AND user_id=? AND status!='staged' AND removed_at IS NULL",(txn_id,user["id"])).fetchone()
+    if not t:
+        raise LookupError("Transaction not found")
+    from datetime import timedelta
+    start=(date.fromisoformat(t["date"])-timedelta(days=30)).isoformat()
+    end=(date.fromisoformat(t["date"])+timedelta(days=30)).isoformat()
+    rows=db.execute("SELECT t.id,t.date,t.amount_minor,t.direction,t.merchant,t.description,a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.user_id=? AND t.id!=? AND t.date BETWEEN ? AND ? AND t.direction!=? AND t.status!='staged' AND t.removed_at IS NULL AND NOT EXISTS(SELECT 1 FROM flow_group_members m WHERE m.txn_id=t.id) ORDER BY ABS(julianday(t.date)-julianday(?)), ABS(t.amount_minor-?) LIMIT 25",(user["id"],txn_id,start,end,t["direction"],t["date"],t["amount_minor"])).fetchall()
+    return [{"txn":dict(row),"same_amount":row["amount_minor"]==t["amount_minor"],"same_merchant":bool(t["merchant_key"] and merchant_key(row["merchant"])==t["merchant_key"])} for row in rows]
+
+@app.post("/api/flows")
+def create_flow(b: FlowIn, user=Depends(current_user), db=Depends(get_db)):
+    if b.kind not in ("pass_through","loan","repayment","reimbursement","temporary_transfer"):
+        raise ValueError("Unknown flow kind")
+    ids=list(dict.fromkeys(b.transaction_ids))
+    if not (2<=len(ids)<=50):
+        raise ValueError("Link between 2 and 50 transactions")
+    marks=",".join("?" * len(ids))
+    rows=db.execute(f"SELECT * FROM transactions WHERE user_id=? AND id IN ({marks}) AND status!='staged' AND removed_at IS NULL", [user["id"],*ids]).fetchall()
+    if len(rows)!=len(ids) or db.execute(f"SELECT 1 FROM flow_group_members WHERE txn_id IN ({marks}) LIMIT 1",ids).fetchone() or db.execute(f"SELECT 1 FROM transaction_group_members WHERE txn_id IN ({marks}) LIMIT 1",ids).fetchone():
+        raise ValueError("Some transactions cannot be linked; check existing flow groups")
+    for row in rows:
+        if row["dup_status"]=="suspected" or db.execute("SELECT 1 FROM splits WHERE txn_id=?", (row["id"],)).fetchone():
+            raise ValueError("Resolve suspected duplicates and split categories before linking")
+    cur=db.execute("INSERT INTO flow_groups(user_id,kind) VALUES(?,?)",(user["id"],b.kind))
+    for row in rows:
+        db.execute("INSERT INTO flow_group_members(txn_id,group_id,original_type,original_category_id,original_status,original_reviewed_at,original_skipped_at) VALUES(?,?,?,?,?,?,?)",(row["id"],cur.lastrowid,row["type"],row["category_id"],row["status"],row["reviewed_at"],row["skipped_at"]))
+        db.execute("UPDATE transactions SET type='transfer',category_id=NULL,status='categorized',reviewed_at=datetime('now') WHERE id=?",(row["id"],))
+    db.commit()
+    return {"id":cur.lastrowid,"linked":len(rows)}
+
+@app.get("/api/flows")
+def list_flows(user=Depends(current_user), db=Depends(get_db)):
+    groups=db.execute("SELECT * FROM flow_groups WHERE user_id=? ORDER BY id DESC",(user["id"],)).fetchall()
+    return [{"id":g["id"],"kind":g["kind"],"transactions":[dict(r) for r in db.execute("SELECT t.id,t.date,t.direction,t.amount_minor,t.merchant FROM transactions t JOIN flow_group_members m ON m.txn_id=t.id WHERE m.group_id=? ORDER BY t.date,t.id",(g["id"],))]} for g in groups]
+
+@app.delete("/api/flows/{group_id}")
+def unlink_flow(group_id: int, user=Depends(current_user), db=Depends(get_db)):
+    if not db.execute("SELECT 1 FROM flow_groups WHERE id=? AND user_id=?",(group_id,user["id"])).fetchone():
+        raise LookupError("Flow not found")
+    rows=db.execute("SELECT m.* FROM flow_group_members m JOIN transactions t ON t.id=m.txn_id WHERE m.group_id=? AND t.user_id=?",(group_id,user["id"])).fetchall()
+    for row in rows:
+        db.execute("UPDATE transactions SET type=?,category_id=?,status=?,reviewed_at=?,skipped_at=? WHERE id=?",(row["original_type"],row["original_category_id"],row["original_status"],row["original_reviewed_at"],row["original_skipped_at"],row["txn_id"]))
+    db.execute("DELETE FROM flow_group_members WHERE group_id=?",(group_id,))
+    db.execute("DELETE FROM flow_groups WHERE id=? AND user_id=?",(group_id,user["id"]))
+    db.commit()
+    return {"ok":True}
 
 # ================================================================ static frontend
 

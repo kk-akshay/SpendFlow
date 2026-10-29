@@ -1,4 +1,4 @@
-/* Tally core: API, helpers, router, auth, app shell, import flow. Other screens live in review.js and pages.js. */
+/* SpendFlow core: API, helpers, router, auth, app shell, import flow. Other screens live in review.js and pages.js. */
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -7,7 +7,7 @@ const S = { user: null, cats: [], accounts: [], cfg: { currency: 'INR', locale: 
 
 /* ---------- API ---------- */
 async function api(path, { method = 'GET', body, form } = {}) {
-  const opt = { method, headers: { 'x-requested-with': 'tally' }, credentials: 'same-origin' };
+  const opt = { method, headers: { 'x-requested-with': 'spendflow' }, credentials: 'same-origin' };
   if (form) opt.body = form;
   else if (body !== undefined) { opt.headers['content-type'] = 'application/json'; opt.body = JSON.stringify(body); }
   let res;
@@ -108,7 +108,7 @@ window.addEventListener('hashchange', route);
 /* ---------- auth ---------- */
 function renderAuth(mode = 'login') {
   $('#app').innerHTML = `<div class="auth"><form class="card" id="af" novalidate>
-    <div class="brand" style="padding:0 0 18px"><i></i>Tally</div>
+    <div class="brand" style="padding:0 0 18px"><i></i>SpendFlow</div>
     <h1 style="font-size:22px">${mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
     <p class="muted" style="margin:6px 0 22px">${mode === 'login' ? 'Pick up where you left off.' : 'Understand where your money goes. Your data stays on this server.'}</p>
     <div id="aerr"></div>
@@ -133,6 +133,7 @@ const ICON = {
   dashboard: '<path d="M4 13h6V4H4zM14 20h6V4h-6zM4 20h6v-3H4z"/>',
   review: '<rect x="5" y="4" width="14" height="16" rx="3"/><path d="M9 9h6M9 13h4"/>',
   transactions: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/>',
   plan: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>',
 };
@@ -140,7 +141,7 @@ const svg = (n) => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" 
 
 function renderShell() {
   const items = [['dashboard', 'Home'], ['review', 'Review'], ['transactions', 'History'], ['calendar', 'Calendar'], ['groups', 'Linked money'], ['plan', 'Plan'], ['settings', 'Settings']];
-  $('#app').innerHTML = `<nav class="nav" aria-label="Main"><div class="brand"><i></i>Tally</div>
+  $('#app').innerHTML = `<nav class="nav" aria-label="Main"><div class="brand"><i></i>SpendFlow</div>
     ${items.map(([r, l]) => `<a class="item" data-r="${r}" href="#/${r}" ${r === 'review' ? '' : ''}>${svg(r)}<span>${l}</span>${r === 'review' ? '<span class="badge" id="nav-badge" hidden></span>' : ''}</a>`).join('')}
     <div class="grow"></div>
     <button class="btn primary desk" id="nav-import">Import statement</button>
@@ -152,7 +153,7 @@ function toggleTheme() {
   const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
   const next = cur === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
-  try { localStorage.setItem('tally-theme', next); } catch { /* ignore */ }
+  try { localStorage.setItem('spendflow-theme', next); } catch { /* ignore */ }
 }
 
 async function boot() {
@@ -219,7 +220,7 @@ routes.import = async (main, [ids]) => {
     const id = list[idx];
     const d = await api('/imports/' + id);
     const { statement: st, summary: sm, rows } = d;
-    const keepFlag = window.__importReviewFlag || false;
+    const keepFlag = sessionStorage.getItem('spendflow-import-review') === '1';
     if (st.status !== 'preview') { go('#/review'); return; }
     const needsLook = rows.filter((r) => r.dup_status || r.flags.some((f) => !f.startsWith('Read with OCR')));
     main.innerHTML = `<div class="head"><div><h1>Check your import</h1><p class="sub">${esc(st.filename)} · ${esc(st.account_name)}${list.length > 1 ? ` · file ${idx + 1} of ${list.length}` : ''}</p></div>
@@ -249,12 +250,12 @@ routes.import = async (main, [ids]) => {
     };
     if ($('#onlyflag')) $('#onlyflag').checked = keepFlag;
     draw(keepFlag);
-    $('#onlyflag') && ($('#onlyflag').onchange = (e) => { window.__importReviewFlag = e.target.checked; draw(e.target.checked); });
+    $('#onlyflag') && ($('#onlyflag').onchange = (e) => { sessionStorage.setItem('spendflow-import-review', e.target.checked ? '1' : '0'); draw(e.target.checked); });
     main.onclick = async (e) => {
       const keep = e.target.closest('[data-keep]'), del = e.target.closest('[data-del]'), ed = e.target.closest('[data-edit]');
       try {
         if (keep) { e.preventDefault(); await api('/imports/rows/' + keep.dataset.keep, { method: 'PATCH', body: { dup_status: 'cleared' } }); show(); }
-        else if (del) { await api('/imports/rows/' + del.dataset.del, { method: 'DELETE' }); show(); }
+        else if (del) { if (await confirmBox({ title: 'Remove this row?', body: 'Only this selected preview row is removed.', ok: 'Remove', danger: true })) { await api('/imports/rows/' + del.dataset.del, { method: 'DELETE' }); show(); } }
         else if (ed) editRow(rows.find((r) => r.id == ed.dataset.edit), show);
       } catch (er) { fail(er); }
     };

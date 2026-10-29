@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, Response
 
-from .config import COOKIE_NAME, COOKIE_SECURE, SESSION_DAYS
+from .config import COOKIE_NAME, COOKIE_SECURE, LEGACY_COOKIE_NAME, SESSION_DAYS
 from .db import get_db
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -48,21 +48,22 @@ def start_session(db, response: Response, user_id: int) -> None:
 
 
 def end_session(db, request: Request, response: Response) -> None:
-    token = request.cookies.get(COOKIE_NAME)
-    if token:
-        db.execute("DELETE FROM sessions WHERE token_hash=?", (_token_hash(token),))
-        db.commit()
-    response.delete_cookie(COOKIE_NAME, path="/")
+    for name in (COOKIE_NAME, LEGACY_COOKIE_NAME):
+        token = request.cookies.get(name)
+        if token:
+            db.execute("DELETE FROM sessions WHERE token_hash=?", (_token_hash(token),))
+        response.delete_cookie(name, path="/")
+    db.commit()
 
 
 def require_csrf(request: Request) -> None:
     """State-changing calls must carry a custom header, which cross-site forms cannot send."""
-    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("x-requested-with") != "tally":
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("x-requested-with") not in ("spendflow", "tally"):
         raise HTTPException(403, "Missing request header")
 
 
 def current_user(request: Request, db=Depends(get_db)) -> dict:
-    token = request.cookies.get(COOKIE_NAME)
+    token = request.cookies.get(COOKIE_NAME) or request.cookies.get(LEGACY_COOKIE_NAME)
     if not token:
         raise HTTPException(401, "Please sign in")
     row = db.execute(
