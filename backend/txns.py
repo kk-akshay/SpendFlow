@@ -313,7 +313,7 @@ def next_item(db, user_id: int, scope: str = "pending", order: str = "desc") -> 
     direction = "ASC" if order == "asc" else "DESC"
     sort = ", ".join(piece.strip() + " " + direction for piece in sort.split(", ") )
     row = db.execute(
-        SELECT_TXN + f" WHERE t.user_id=? AND t.status=? AND {DUP_OK} ORDER BY {sort} LIMIT 1", (user_id, status)).fetchone()
+        SELECT_TXN + f" WHERE t.user_id=? AND t.status=? AND t.removed_at IS NULL AND {DUP_OK} ORDER BY {sort} LIMIT 1", (user_id, status)).fetchone()
     return _build_item(db, user_id, row) if row else None
 
 
