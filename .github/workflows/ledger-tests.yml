@@ -22,6 +22,7 @@ jobs:
       - run: python tests/people_loans_test.py
       - run: python tests/password_recovery_test.py
       - run: python tests/settings_selector_test.py
+      - run: python tests/people_selector_test.py
       - run: python tests/make_samples.py tests/samples
       - run: python tests/api_test.py tests/samples
       - uses: actions/setup-node@v4
