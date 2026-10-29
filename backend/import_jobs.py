@@ -158,6 +158,48 @@ def _process(job_id, uid, payload, password):
                 shutil.rmtree(p.parent, ignore_errors=True)
 
 
+
+def enqueue_commit(uid: int, statement_id: int) -> str:
+    """Confirm a prepared statement without holding an HTTP connection open."""
+    from datetime import datetime, timezone
+    job_id = uuid.uuid4().hex
+    dep = _db()
+    db = next(dep)
+    try:
+        row = db.execute("SELECT status FROM statements WHERE id=? AND user_id=?",
+                         (statement_id, uid)).fetchone()
+        if row is None or row["status"] != "preview":
+            raise LookupError("Statement not found or already confirmed.")
+        db.execute("INSERT INTO import_jobs(id,user_id,status,payload,result,updated_at) VALUES(?,?,?,?,?,?)",
+                   (job_id, uid, "queued", json.dumps({"action": "commit", "statement_id": statement_id}),
+                    "{}", datetime.now(timezone.utc).isoformat()))
+        db.commit()
+    finally:
+        try:
+            next(dep)
+        except StopIteration:
+            pass
+    _pool.submit(_process_commit, job_id, uid, statement_id)
+    return job_id
+
+
+def _process_commit(job_id: str, uid: int, statement_id: int):
+    _set(job_id, "processing")
+    dep = _db()
+    db = next(dep)
+    try:
+        outcome = importing.commit_statement(db, uid, statement_id)
+        _set(job_id, "done", {"commit_result": outcome})
+    except Exception:
+        db.rollback()
+        log.exception("Statement confirmation job failed: %s", job_id)
+        _set(job_id, "failed", {"detail": "Unable to confirm statement. Please check Statements before retrying."})
+    finally:
+        try:
+            next(dep)
+        except StopIteration:
+            pass
+
 def recover_interrupted_jobs():
     """No in-process worker survives a Render restart."""
     dep = _db()
