@@ -280,7 +280,7 @@ routes.settings = async (main) => {
 
 /* Daily calendar, reusing the existing transaction editor. */
 routes.calendar = async (main, [initial]) => {
-  let day = /^\\d{4}-\\d{2}-\\d{2}$/.test(initial || '') ? initial : todayIso();
+  let day = /^\d{4}-\d{2}-\d{2}$/.test(initial || '') ? initial : todayIso();
   async function draw(){
     const r=await api('/transactions?'+new URLSearchParams({from:day,to:day,sort:'date_desc',limit:'200'}));
     main.innerHTML='<div class="head"><h1>Calendar</h1></div><div class="card flat"><div class="row" id="day-controls"></div></div><div class="card" style="margin-top:16px"><h2>'+fdate(day)+' · '+r.total+' transactions</h2><div class="list">'+(r.items.map(txnRow).join('')||'<p class="muted">No transactions for this date.</p>')+'</div></div>';
