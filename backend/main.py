@@ -650,8 +650,10 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         return {"txn": txns.get_txn(db, uid, txn_id), "undo": undo}
 
     if db.execute("SELECT 1 FROM transaction_group_members WHERE txn_id=?", (txn_id,)).fetchone() and (
-        "category_id" in body or body.get("splits") or "type" in body or
-        "direction" in body or "amount_minor" in body):
+        ("category_id" in body and body["category_id"] != row["category_id"]) or body.get("splits") or
+        ("type" in body and body["type"] != row["type"]) or
+        ("direction" in body and body["direction"] != row["direction"]) or
+        ("amount_minor" in body and body["amount_minor"] != row["amount_minor"])):
         raise HTTPException(400, "Unlink this transaction from its group before changing its accounting details.")
     # field corrections
     vals = {}
