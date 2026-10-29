@@ -116,6 +116,27 @@ async function openTxn(id, done) {
   $('#tdel',m.el).after(exclude);
   exclude.onclick=async()=>{if(!await confirmBox({title:'Delete and permanently exclude matching imports?',body:'Matches require the same account, merchant, description, direction and amount. Repeated genuine payments could also match. Remove the rule later in Linked money.',ok:'Confirm exclusion',danger:true}))return;
     try{await api('/transactions/'+id+'/exclude',{method:'POST',body:{confirmed:true}});m.close();toast('Exclusion saved');refreshBadge();done&&done();}catch(e){fail(e);}};
+  const findMatches=document.createElement('button'); findMatches.className='btn sm'; findMatches.textContent='Find related payments';
+  $('#tdel',m.el).after(findMatches);
+  findMatches.onclick=async()=>{
+    try{
+      const matches=await api('/transactions/'+id+'/matches');
+      const prompt=modal('<h2>Possible related payments</h2><p class="muted small">These are suggestions based on amount, date and description. Confirm only genuine loan, repayment or pass-through transactions.</p>'
+        +'<div id="match-error"></div><div class="list">'+(matches.map(t=>'<label class="check"><input type="checkbox" data-match="'+t.id+'"><span>'+fdate(t.date)+' · '+esc(t.merchant||t.description)+' · '+money(t.amount_minor)+' · '+esc(t.reason)+'</span></label>').join('')||'<p class="muted">No strong matches found. Use Linked money to link manually.</p>')+'</div>'
+        +'<div class="field"><label>Group name</label><input id="match-name" value="'+esc(t.merchant||'Related payments')+'"></div>'
+        +'<div class="field"><label>Kind</label><select id="match-kind"><option value="pass_through">Pass-through</option><option value="loan">Loan</option><option value="repayment">Repayment</option><option value="transfer">Transfer</option></select></div>'
+        +'<div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="match-confirm">Confirm selected links</button></div>');
+      $('[data-x]',prompt.el).onclick=()=>prompt.close();
+      $('#match-confirm',prompt.el).onclick=async()=>{
+        try{
+          const ids=[id,...$('[data-match]:checked',prompt.el).map(x=>+x.dataset.match)];
+          if(ids.length<2)throw Error('Choose at least one matching payment.');
+          await api('/groups',{method:'POST',body:{name:$('#match-name',prompt.el).value,kind:$('#match-kind',prompt.el).value,ids}});
+          prompt.close();m.close();toast('Payments linked');refreshBadge();done&&done();
+        }catch(e){$('#match-error',prompt.el).textContent=e.message;}
+      };
+    }catch(e){fail(e);}
+  };
   $('#tsave', m.el).onclick = () => {
     const freq = $('#tr', m.el).value, body = { remember: $('#tremember', m.el).checked, note: $('#tn', m.el).value, recurring: !!freq, recurring_freq: freq || undefined, type: $('#tt', m.el).value };
     if (catId && (changed || t.status !== 'categorized') && !t.is_split) body.category_id = catId;
