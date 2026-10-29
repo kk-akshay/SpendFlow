@@ -116,7 +116,9 @@ function renderAuth(mode = 'login') {
     <div class="field"><label for="pw">Password</label><input id="pw" type="password" autocomplete="${mode === 'login' ? 'current-password' : 'new-password'}" required minlength="8">${mode === 'register' ? '<p class="small muted" style="margin-top:6px">At least 8 characters.</p>' : ''}</div>
     <button class="btn primary" style="width:100%" id="asub">${mode === 'login' ? 'Sign in' : 'Create account'}</button>
     <p class="small muted" style="text-align:center;margin-top:16px">${mode === 'login' ? 'New here?' : 'Already have an account?'} <a href="#" id="aswitch">${mode === 'login' ? 'Create an account' : 'Sign in'}</a></p>
+    ${mode === 'login' ? '<p class="small muted" style="text-align:center;margin-top:8px"><a href="#" id="forgot-password">Forgot password?</a></p>' : ''}
   </form></div>`;
+  $('#forgot-password') && ($('#forgot-password').onclick = e => { e.preventDefault(); renderPasswordReset(); });
   $('#aswitch').onclick = (e) => { e.preventDefault(); renderAuth(mode === 'login' ? 'register' : 'login'); };
   $('#af').onsubmit = async (e) => {
     e.preventDefault();
@@ -125,6 +127,35 @@ function renderAuth(mode = 'login') {
       S.user = await api(`/auth/${mode}`, { method: 'POST', body: { email: $('#em').value, password: $('#pw').value } });
       await boot();
     } catch (er) { $('#aerr').innerHTML = `<div class="err-box" role="alert">${esc(er.message)}</div>`; btn.disabled = false; btn.textContent = mode === 'login' ? 'Sign in' : 'Create account'; }
+  };
+}
+
+/* ---------- password recovery ---------- */
+function renderPasswordReset() {
+  $('#app').innerHTML = `<div class="auth"><form class="card" id="reset-form">
+    <div class="brand" style="padding:0 0 18px"><i></i>SpendFlow</div>
+    <h1 style="font-size:22px">Reset password</h1>
+    <p class="muted small" style="margin:8px 0 18px">On the computer running SpendFlow, run <code>python3 -m backend.reset_password_code</code> to generate a one-time code. It expires after 15 minutes.</p>
+    <div id="reset-error" role="alert"></div>
+    <div class="field"><label for="reset-code">One-time reset code</label><input id="reset-code" required autocomplete="off"></div>
+    <div class="field"><label for="reset-pass">New password</label><input id="reset-pass" type="password" required minlength="12" autocomplete="new-password"></div>
+    <div class="field"><label for="reset-confirm">Confirm new password</label><input id="reset-confirm" type="password" required minlength="12" autocomplete="new-password"></div>
+    <button class="btn primary" style="width:100%" id="reset-submit">Reset password</button>
+    <p class="small muted" style="text-align:center;margin-top:14px"><a href="#" id="reset-back">Back to sign in</a></p>
+  </form></div>`;
+  $('#reset-back').onclick = e => { e.preventDefault(); renderAuth('login'); };
+  $('#reset-form').onsubmit = async e => {
+    e.preventDefault();
+    const password = $('#reset-pass').value;
+    if (password !== $('#reset-confirm').value) {
+      $('#reset-error').innerHTML = '<div class="err-box">Passwords do not match.</div>';
+      return;
+    }
+    const b = $('#reset-submit'); b.disabled = true;
+    try {
+      await api('/auth/reset-password', {method:'POST', body:{token:$('#reset-code').value.trim(),new_password:password}});
+      renderAuth('login'); toast('Password updated. Please sign in.');
+    } catch (err) { $('#reset-error').innerHTML = `<div class="err-box">${esc(err.message)}</div>`; b.disabled = false; }
   };
 }
 

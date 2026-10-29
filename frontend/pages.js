@@ -313,11 +313,31 @@ routes.settings = async (main) => {
       <div class="list">${exclusions.map(r=>`<div><span class="grow"><b>${esc(r.merchant_key)}</b><div class="small muted">${esc(r.account_name)} · ${esc(r.direction)} · ${money(r.amount_minor)}</div></span><button class="btn sm danger" data-exclusion-del="${r.id}">Remove</button></div>`).join('')||'<p class="muted small">No exclusion rules.</p>'}</div></div>
     <div class="card" style="margin-bottom:16px"><h2>Linked non-personal flows</h2><p class="muted small">Groups are excluded from personal spending and income without altering the source transactions.</p>
       <div class="list">${flows.map(g=>`<div><span class="grow"><b>${esc(g.kind.replaceAll('_',' '))}</b><div class="small muted">${g.transactions.length} transactions · ${g.transactions.map(t=>money(t.amount_minor)).join(', ')}</div></span><button class="btn sm danger" data-flow-del="${g.id}">Unlink</button></div>`).join('')||'<p class="muted small">No linked flows.</p>'}</div></div>
+    <div class="card" style="margin-bottom:16px"><h2>Account security</h2><p class="muted small">Change your password using your current password. You will need to sign in again afterwards.</p><button class="btn sm" id="change-password">Change password</button></div>
     <div class="card" style="margin-bottom:16px"><h2 style="margin-bottom:6px">Appearance</h2><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div>
     <div class="card"><h2 style="margin-bottom:6px">Your data</h2><p class="muted small" style="margin-bottom:14px">Everything lives in this app's own database and upload folder. Nothing is shared.</p>
       <div class="row"><a class="btn" href="/api/export.csv" download>Export all as CSV</a><button class="btn danger" id="wipe">Delete all statements &amp; transactions</button><button class="btn danger" id="delacc">Delete my account</button></div></div>`;
   $('#imp').onclick = () => openImport();
   $('[data-rule-cat]').forEach(el => { el.onchange = async () => { try { const rule = classificationRules.find(r=>r.id===+el.dataset.ruleCat); const newCat=cat(+el.value); await api('/classification-rules/'+rule.id,{method:'PATCH',body:{category_id:newCat.id,type:newCat.kind==='income'?'income':newCat.kind==='transfer'?'transfer':'expense'}}); toast('Rule updated'); } catch(e){fail(e);} }; });
+  $('#change-password').onclick = () => {
+    const m = modal(`<h2>Change password</h2><div id="password-error" role="alert"></div>
+      <div class="field"><label for="current-password">Current password</label><input id="current-password" type="password" autocomplete="current-password"></div>
+      <div class="field"><label for="new-password">New password (at least 12 characters)</label><input id="new-password" type="password" minlength="12" autocomplete="new-password"></div>
+      <div class="field"><label for="confirm-password">Confirm new password</label><input id="confirm-password" type="password" minlength="12" autocomplete="new-password"></div>
+      <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="save-password">Change password</button></div>`);
+    $('[data-x]', m.el).onclick = () => m.close();
+    $('#save-password',m.el).onclick = async () => {
+      const password=$('#new-password',m.el).value;
+      if (password !== $('#confirm-password',m.el).value) {
+        $('#password-error',m.el).innerHTML='<div class="err-box">Passwords do not match.</div>'; return;
+      }
+      const btn=$('#save-password',m.el); btn.disabled=true;
+      try {
+        await api('/auth/change-password',{method:'POST',body:{current_password:$('#current-password',m.el).value,new_password:password}});
+        m.close(); S.user=null; renderAuth('login'); toast('Password changed. Please sign in again.');
+      } catch(e) { $('#password-error',m.el).innerHTML=`<div class="err-box">${esc(e.message)}</div>`; btn.disabled=false; }
+    };
+  };
   $('#out').onclick = async () => { await api('/auth/logout', { method: 'POST' }); S.user = null; renderAuth(); };
   const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
   $$('#theme button').forEach((b) => { b.classList.toggle('on', b.dataset.t === cur); b.onclick = () => { document.documentElement.dataset.theme = b.dataset.t; try { localStorage.setItem('spendflow-theme', b.dataset.t); } catch { /* */ } $$('#theme button').forEach((x) => x.classList.toggle('on', x === b)); }; });

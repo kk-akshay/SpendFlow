@@ -18,6 +18,13 @@ CREATE TABLE IF NOT EXISTS sessions(
   expires_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS password_reset_tokens(
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id);
+
 CREATE TABLE IF NOT EXISTS accounts(
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
