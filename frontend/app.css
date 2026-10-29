@@ -286,7 +286,7 @@ input[type="checkbox"],input[type="radio"]{accent-color:var(--accent)}
 }
 
 /* History selection toolbar: stay immediately above transaction list. */
-#selbar:not(:empty) { position:sticky;top:64px;z-index:20;margin:0 0 12px; }
+#selbar:not(:empty) { position:static;margin:12px 0 0; }
 #selbar .sel-bar { position:static;bottom:auto;margin:0;background:var(--surface);color:var(--text);border:1px solid var(--line);box-shadow:0 8px 22px rgba(0,0,0,.12); }
 #selbar .sel-bar-actions { display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1; }
 #selbar .sel-bar select { flex:1 1 145px;min-width:130px;max-width:240px;background:var(--input);color:var(--text);border:1px solid var(--line); }
@@ -298,7 +298,7 @@ input[type="checkbox"],input[type="radio"]{accent-color:var(--accent)}
 .scrim { overscroll-behavior:contain; }
 .scrim .modal { overscroll-behavior:contain; }
 @media(max-width:760px) {
-  #selbar:not(:empty) {top:60px;}
+  #selbar:not(:empty) {top:auto;}
   #selbar .sel-bar {padding:12px;align-items:flex-start;flex-direction:column;gap:8px;}
   #selbar .sel-bar-actions {width:100%;flex:0 0 auto;}
   #selbar .sel-bar select {max-width:none;flex:1 1 100%;}

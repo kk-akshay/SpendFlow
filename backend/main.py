@@ -31,6 +31,13 @@ from .statement_parser import parse_file
 init_db()
 app = FastAPI(title="SpendFlow", docs_url=None, redoc_url=None, dependencies=[Depends(require_csrf)])
 
+@app.on_event("startup")
+def _recover_incomplete_imports():
+    # A restarted process cannot resume work from a terminated thread.
+    from .import_jobs import recover_interrupted_jobs
+    recover_interrupted_jobs()
+
+
 
 @app.exception_handler(RequestValidationError)
 async def _validation(_: Request, exc: RequestValidationError):
@@ -429,6 +436,33 @@ def _resolve_account(db, uid, account_id, new_name, new_type, res, cache: dict) 
                       (uid, name, "upi" if res.source_type == "gpay" else "bank", res.account_last4)).lastrowid
 
 
+@app.post("/api/imports/jobs", status_code=202)
+def start_import_job(files: list[UploadFile] = File(...), account_id: int | None = Form(None),
+                     new_account_name: str | None = Form(None), new_account_type: str = Form("bank"),
+                     pdf_password: str | None = Form(None), use_ai: bool = Form(False),
+                     user=Depends(current_user)):
+    """Return immediately; parsing and staging run outside the HTTP request."""
+    from . import import_jobs
+    if not files or len(files) > MAX_FILES_PER_IMPORT:
+        raise HTTPException(400, "Choose 1 to 10 files.")
+    uploads = []
+    for f in files:
+        data = f.file.read(MAX_UPLOAD_BYTES + 1)
+        uploads.append((Path(f.filename or "statement").name[:120], data))
+    job_id = import_jobs.enqueue(user["id"], uploads, account_id,
+                                 new_account_name, new_account_type, pdf_password, use_ai)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/api/imports/jobs/{job_id}")
+def import_job_status(job_id: str, user=Depends(current_user), db=Depends(get_db)):
+    row = db.execute("SELECT status,result FROM import_jobs WHERE id=? AND user_id=?",
+                     (job_id, user["id"])).fetchone()
+    if not row:
+        raise LookupError("Import job not found.")
+    return {"status": row["status"], **json.loads(row["result"] or "{}")}
+
+
 @app.post("/api/imports")
 def import_files(files: list[UploadFile] = File(...), account_id: int | None = Form(None),
                  new_account_name: str | None = Form(None), new_account_type: str = Form("bank"),
@@ -623,6 +657,12 @@ def add_staged(sid: int, n: StagedNew, user=Depends(current_user), db=Depends(ge
     importing.refresh_statement_meta(db, sid)
     db.commit()
     return {"id": tid}
+
+
+@app.post("/api/imports/{sid}/commit-job", status_code=202)
+def queue_statement_commit(sid: int, user=Depends(current_user)):
+    from . import import_jobs
+    return {"job_id": import_jobs.enqueue_commit(user["id"], sid), "status": "queued"}
 
 
 @app.post("/api/imports/{sid}/commit")

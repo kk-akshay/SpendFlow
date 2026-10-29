@@ -115,10 +115,6 @@ async function openTxn(id, done) {
     <div class="desc small muted" style="margin:14px 0;padding:10px 12px;background:var(--surface2);border-radius:12px;word-break:break-word">${esc(t.description || '(no description)')}</div>
     ${t.flags.map((f) => `<div class="flag" style="margin:0 0 8px">⚠ ${esc(f)}</div>`).join('')}
     <div id="terr"></div>
-    <div class="transaction-editor-toolbar" role="group" aria-label="Transaction actions">
-      <div class="txn-editor-buttons"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button><button class="btn sm" id="tperson">Track with person</button></div>
-      <div class="txn-editor-confirm"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save changes</button></div>
-    </div>
     ${t.is_split ? `<div class="field"><label>Split across</label>${t.splits.map((s) => `<div class="row small">${catDot(s)}<span class="grow">${esc(s.category_name)}</span><b>${money(s.amount_minor)}</b></div>`).join('')}<p class="small muted" style="margin-top:6px">To change a split, send it back to review.</p></div>` : ''}
     <div class="field"><label>Category</label><div class="row" id="tcats" style="gap:8px">${S.cats.map((c) => `<button class="pill" data-c="${c.id}" style="cursor:pointer;border:1.5px solid ${c.id === catId ? esc(c.color) : 'transparent'}">${catDot(c)}${esc(c.name)}</button>`).join('')}</div></div>
     <div class="grid g2"><div class="field"><label>Type</label><select id="tt">${['expense', 'income', 'transfer'].map((k) => `<option value="${k}" ${k === type ? 'selected' : ''}>${typeLabel[k]}</option>`).join('')}</select></div>
@@ -130,6 +126,10 @@ async function openTxn(id, done) {
       <div class="field"><label for="tm">Merchant</label><input id="tm" value="${esc(t.merchant)}" maxlength="80"></div><div class="field"><label for="td">Date</label><input id="td" type="date" value="${esc(t.date)}"></div>
       <div class="field"><label for="ta">Amount</label><input id="ta" inputmode="decimal" value="${(t.amount_minor / 100).toFixed(2)}" ${t.is_split ? 'disabled' : ''}></div>
       <div class="field"><label for="tdir">Direction</label><select id="tdir"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></div></div></details>
+    <div class="transaction-editor-toolbar" role="group" aria-label="Transaction actions">
+      <div class="txn-editor-buttons"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button><button class="btn sm" id="tperson">Track with person</button></div>
+      <div class="txn-editor-confirm"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save changes</button></div>
+    </div>
     `);
   $('#txn-create-tag',m.el).onclick=()=>{
     const dialog=modal('<h2>New tag</h2><div class="field"><label>Name</label><input id="tag-new-name" maxlength="80"></div><div class="field"><label>Type</label><select id="tag-new-kind"><option value="trip">Trip</option><option value="person">Person / beneficiary</option><option value="custom">Other</option></select></div><div id="tag-new-err"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tag-new-save">Create</button></div>');
@@ -231,7 +231,7 @@ routes.transactions = async (main, [pre]) => {
         <label class="check"><input type="checkbox" id="frec"> Recurring only</label>
         <div><label for="ffrom">From</label><input type="date" id="ffrom" value="${esc(f.from.replace(/-31$/, '-01'))}"></div><div><label for="fto">To</label><input type="date" id="fto"></div>
         <div class="row" style="flex-wrap:nowrap"><input id="fmin" inputmode="decimal" placeholder="Min ₹" aria-label="Minimum amount"><input id="fmax" inputmode="decimal" placeholder="Max ₹" aria-label="Maximum amount"></div></div></details></div>
-    <div id="selbar" aria-live="polite"></div><div id="list"></div>`;
+    <div id="list"></div><div id="selbar" aria-live="polite"></div>`;
   $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
   $('#imp').onclick = () => openImport();
   $('#add-manual').onclick = () => manualTransaction(todayIso(), load);
