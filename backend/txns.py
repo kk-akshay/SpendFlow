@@ -10,7 +10,7 @@ from .merchants import keyword_category
 
 # A transaction "counts" once imported, unless it is an unresolved suspected duplicate.
 DUP_OK = "(t.dup_status IS NULL OR t.dup_status='cleared')"
-ACTIVE = f"t.status IN ('pending','categorized','skipped') AND {DUP_OK}"
+ACTIVE = f"t.status IN ('pending','categorized','skipped') AND t.removed_at IS NULL AND {DUP_OK}"
 
 SELECT_TXN = """
 SELECT t.*, a.name AS account_name, c.name AS category_name, c.color AS category_color, c.kind AS category_kind,
@@ -253,9 +253,9 @@ def apply_category(db, user_id: int, txn_id: int, p: dict) -> dict:
     applied = 0
     if p.get("apply_similar") and cat and t["merchant_key"]:
         rows = db.execute(
-            "SELECT id FROM transactions WHERE user_id=? AND merchant_key=? AND direction=? AND status='pending' "
-            "AND id!=? AND transfer_pair_id IS NULL AND (dup_status IS NULL OR dup_status='cleared')",
-            (user_id, t["merchant_key"], t["direction"], txn_id)).fetchall()
+            "SELECT id FROM transactions WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=? AND status='pending' "
+            "AND id!=? AND transfer_pair_id IS NULL AND removed_at IS NULL AND (dup_status IS NULL OR dup_status='cleared')",
+            (user_id, t["account_id"], t["merchant_key"], t["direction"], txn_id)).fetchall()
         for r in rows:
             snaps.append(snapshot(db, r["id"]))
             db.execute("UPDATE transactions SET category_id=?, type=?, status='categorized', reviewed_at=? WHERE id=?",
@@ -290,9 +290,9 @@ def _build_item(db, user_id: int, row) -> dict:
     similar = 0
     if t["merchant_key"]:
         similar = db.execute(
-            "SELECT COUNT(*) FROM transactions WHERE user_id=? AND merchant_key=? AND direction=? AND status='pending' "
-            "AND id!=? AND transfer_pair_id IS NULL AND (dup_status IS NULL OR dup_status='cleared')",
-            (user_id, t["merchant_key"], t["direction"], t["id"])).fetchone()[0]
+            "SELECT COUNT(*) FROM transactions WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=? AND status='pending' "
+            "AND id!=? AND transfer_pair_id IS NULL AND removed_at IS NULL AND (dup_status IS NULL OR dup_status='cleared')",
+            (user_id, t["account_id"], t["merchant_key"], t["direction"], t["id"])).fetchone()[0]
     pair = None
     if t["transfer_pair_id"]:
         p = db.execute("SELECT t.date, t.amount_minor, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
@@ -309,12 +309,12 @@ def next_item(db, user_id: int, scope: str = "pending", order: str = "desc") -> 
     direction = "ASC" if order == "asc" else "DESC"
     sort = ", ".join(piece.strip() + " " + direction for piece in sort.split(", ") )
     row = db.execute(
-        SELECT_TXN + f" WHERE t.user_id=? AND t.status=? AND {DUP_OK} ORDER BY {sort} LIMIT 1", (user_id, status)).fetchone()
+        SELECT_TXN + f" WHERE t.user_id=? AND t.status=? AND t.removed_at IS NULL AND {DUP_OK} ORDER BY {sort} LIMIT 1", (user_id, status)).fetchone()
     return _build_item(db, user_id, row) if row else None
 
 
 def item_for(db, user_id: int, txn_id: int) -> dict | None:
-    row = db.execute(SELECT_TXN + f" WHERE t.id=? AND t.user_id=? AND t.status IN ('pending','skipped') AND {DUP_OK}",
+    row = db.execute(SELECT_TXN + f" WHERE t.id=? AND t.user_id=? AND t.status IN ('pending','skipped') AND t.removed_at IS NULL AND {DUP_OK}",
                      (txn_id, user_id)).fetchone()
     return _build_item(db, user_id, row) if row else None
 
@@ -323,6 +323,8 @@ def item_for(db, user_id: int, txn_id: int) -> dict | None:
 
 def search(db, user_id: int, f: dict) -> dict:
     where = ["t.user_id=?", "t.status!='staged'"]
+    if not f.get("include_removed"):
+        where.append("t.removed_at IS NULL")
     args: list = [user_id]
     if f.get("dup") == "suspected":
         where.append("t.dup_status='suspected'")
@@ -412,8 +414,7 @@ def bulk(db, user_id: int, ids: list[int], action: str, p: dict) -> dict:
     elif action == "delete":
         if own:
             marks = ",".join("?" * len(own))
-            db.execute(f"UPDATE transactions SET transfer_pair_id=NULL WHERE transfer_pair_id IN ({marks})", own)
-            db.execute(f"DELETE FROM transactions WHERE id IN ({marks})", own)
+            db.execute(f"UPDATE transactions SET removed_at=? WHERE id IN ({marks})", [now(), *own])
         db.commit()
         return {"changed": len(own), "undo": []}
     else:

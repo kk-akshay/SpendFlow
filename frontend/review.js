@@ -4,7 +4,7 @@ const KEYS = '1234567890qwertyuiopasdfghjklzxcvbnm'.split('');
 
 routes.review = async (main) => {
   let scope = 'pending';
-  let order = localStorage.getItem('tally-review-order') === 'asc' ? 'asc' : 'desc';
+  let order = localStorage.getItem('spendflow-review-order') === 'asc' ? 'asc' : 'desc';
   let state = null;          // {item, progress}
   let opts = { note: '', recurring: false, similar: false, remember: false, showNote: false };
   let lastUndo = null;
@@ -67,7 +67,7 @@ routes.review = async (main) => {
     if (scope === 'skipped' || !p.skipped) {
       main.innerHTML = `<div class="review">${p.total ? progressHtml(p) : ''}<div class="empty card"><div class="big">${p.total ? '🎉' : '📄'}</div>
         <h2>${p.total ? 'All caught up' : 'No transactions yet'}</h2>
-        <p>${p.total ? `You've reviewed ${p.reviewed} transaction${p.reviewed === 1 ? '' : 's'}. New imports will show up here.` : 'Import a bank or Google Pay statement and Tally will walk you through each transaction.'}</p>
+        <p>${p.total ? `You've reviewed ${p.reviewed} transaction${p.reviewed === 1 ? '' : 's'}. New imports will show up here.` : 'Import a bank or Google Pay statement and SpendFlow will walk you through each transaction.'}</p>
         <div class="row" style="justify-content:center">${p.total ? '<a class="btn primary" href="#/dashboard">See your dashboard</a>' : '<button class="btn primary" id="imp">Import a statement</button>'}${scope === 'skipped' ? '<a class="btn" href="#/review" id="toggle-scope">Back to main queue</a>' : ''}</div></div></div>`;
       $('#imp') && ($('#imp').onclick = () => openImport());
       $('#toggle-scope') && ($('#toggle-scope').onclick = (e) => { e.preventDefault(); scope = 'pending'; load(); });
@@ -87,7 +87,7 @@ routes.review = async (main) => {
     const card = $('#card');
     card && card.classList.add('out-r');
     try {
-      const body = { ...payload, note: opts.note || undefined, recurring: opts.recurring || undefined, remember: opts.remember, apply_similar: opts.similar && state.item.similar_count > 0 && !!payload.category_id };
+      const body = { ...payload, note: opts.note || undefined, recurring: opts.recurring || undefined, remember: !!opts.remember, apply_similar: opts.similar && state.item.similar_count > 0 && !!payload.category_id };
       if (typeOverride) body.type = typeOverride;
       const r = await api(`/review/${t.id}/categorize?scope=${scope}&order=${order}`, { method: 'POST', body });
       lastUndo = r.undo; state = { item: r.item, progress: r.progress }; resetOpts();
@@ -103,7 +103,7 @@ routes.review = async (main) => {
     busy = true;
     const card = $('#card'); card && card.classList.add('out-l');
     try {
-      const r = await api(`/review/${state.item.txn.id}/skip?scope=${scope}`, { method: 'POST' });
+      const r = await api(`/review/${state.item.txn.id}/skip?scope=${scope}&order=${order}`, { method: 'POST' });
       lastUndo = r.undo; state = { item: r.item, progress: r.progress }; resetOpts(); setTimeout(draw, 160);
     } catch (e) { card && card.classList.remove('out-l'); fail(e); }
     busy = false;
@@ -113,7 +113,7 @@ routes.review = async (main) => {
     if (!lastUndo || busy) return;
     busy = true;
     try {
-      const r = await api(`/review/restore?scope=${scope}`, { method: 'POST', body: { undo: lastUndo } });
+      const r = await api(`/review/restore?scope=${scope}&order=${order}`, { method: 'POST', body: { undo: lastUndo } });
       lastUndo = null; state = { item: r.item, progress: r.progress }; draw();
     } catch (e) { fail(e); }
     busy = false;
@@ -125,6 +125,8 @@ routes.review = async (main) => {
     $('#toggle-scope') && ($('#toggle-scope').onclick = (e) => { e.preventDefault(); scope = scope === 'skipped' ? 'pending' : 'skipped'; load(); });
     $$('.cat[data-id]').forEach((b) => (b.onclick = () => submit({ category_id: +b.dataset.id })));
     $('#accept') && ($('#accept').onclick = accept);
+    $('#review-order').onchange = (e) => { order = e.target.value; localStorage.setItem('spendflow-review-order', order); load(); };
+    $('#remember').onchange = (e) => { opts.remember = e.target.checked; };
     $('#b-skip').onclick = skip; $('#b-undo').onclick = undo;
     $('#b-rec').onclick = () => { opts.recurring = !opts.recurring; draw(); };
     $('#b-note').onclick = () => { opts.showNote = !opts.showNote; draw(); if (opts.showNote) $('#note').focus(); };

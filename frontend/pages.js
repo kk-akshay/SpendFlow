@@ -41,7 +41,7 @@ routes.dashboard = async (main, [month]) => {
   const d = await api('/dashboard' + (month ? '?month=' + month : ''));
   if (d.empty) {
     main.innerHTML = `<div class="empty card" style="margin-top:40px"><div class="big">🌱</div><h2>Let's see where your money goes</h2>
-      <p>Upload a bank or Google Pay statement. Tally reads it, then asks you about each transaction one at a time.</p>
+      <p>Upload a bank or Google Pay statement. SpendFlow reads it, then asks you about each transaction one at a time.</p>
       <button class="btn primary" id="e-imp">Import your first statement</button></div>`;
     $('#e-imp').onclick = () => openImport(); return;
   }
@@ -106,12 +106,39 @@ async function openTxn(id, done) {
       <div class="field"><label for="tm">Merchant</label><input id="tm" value="${esc(t.merchant)}" maxlength="80"></div><div class="field"><label for="td">Date</label><input id="td" type="date" value="${esc(t.date)}"></div>
       <div class="field"><label for="ta">Amount</label><input id="ta" inputmode="decimal" value="${(t.amount_minor / 100).toFixed(2)}" ${t.is_split ? 'disabled' : ''}></div>
       <div class="field"><label for="tdir">Direction</label><select id="tdir"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></div></div></details>
-    <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Delete</button><button class="btn sm" id="trev">Send to review</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
+    <label class="check small"><input type="checkbox" id="tremember"> Remember category and type for future imports</label>
+    <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
   $$('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
   $('[data-x]', m.el).onclick = () => m.close();
   const patch = async (body, msg) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
-  $('#tdel', m.el).onclick = async () => { m.close(); if (await confirmBox({ title: 'Delete this transaction?', body: 'It will be removed from your history and totals.', ok: 'Delete', danger: true })) { try { await api('/transactions/' + id, { method: 'DELETE' }); toast('Transaction deleted'); refreshBadge(); done && done(); } catch (e) { fail(e); } } };
+  $('#tflow', m.el).onclick = async () => {
+    try {
+      const suggestions = await api('/flows/suggestions/' + id);
+      m.close();
+      const x = modal(`<h2>Link non-personal transactions</h2><p class="muted small">Select only payments that belong to the same transfer, loan, reimbursement or pass-through. These are suggestions, not confirmed matches.</p>
+        <div class="field"><label>Flow type</label><select id="flow-kind"><option value="pass_through">Pass-through payment</option><option value="temporary_transfer">Temporary transfer</option><option value="loan">Loan</option><option value="repayment">Repayment</option><option value="reimbursement">Reimbursement</option></select></div>
+        <div class="list">${suggestions.map(s=>`<label class="row" style="flex-wrap:nowrap"><input type="checkbox" data-flow-txn="${s.txn.id}" style="width:20px;flex:none"><span class="grow"><b>${esc(s.txn.merchant||s.txn.description)}</b><span class="small muted"> · ${fdate(s.txn.date)} · ${esc(s.txn.account_name)} ${s.same_amount?' · Same amount':''}</span></span><b>${money(s.txn.amount_minor)}</b></label>`).join('')||'<p class="muted">No suggested incoming/outgoing partners in the surrounding 30 days.</p>'}</div>
+        <div class="foot"><button class="btn" id="flow-cancel">Cancel</button><button class="btn primary" id="flow-link">Link selected</button></div>`);
+      $('#flow-cancel',x.el).onclick=()=>x.close();
+      $('#flow-link',x.el).onclick=async()=>{
+        const ids=[id,...$('[data-flow-txn]:checked',x.el).map(el=>+el.dataset.flowTxn)];
+        if(ids.length<2)return toast('Select at least one related transaction',{err:true});
+        if(!await confirmBox({title:'Confirm non-personal flow?',body:'The selected transactions will no longer count as personal income or expenses. All original payments remain visible and can be unlinked.',ok:'Link transactions'}))return;
+        try { await api('/flows',{method:'POST',body:{kind:$('#flow-kind',x.el).value,transaction_ids:ids}});x.close();toast('Transactions linked');done&&done();} catch(e){fail(e);}
+      };
+    } catch(e){fail(e);}
+  };
+  $('#tdel', m.el).onclick = async () => {
+    m.close();
+    const x = modal('<h2>Remove transaction</h2><p class="muted small">Choose whether to remove only this transaction or also remember an exact rule for future imports.</p><div class="foot" style="flex-direction:column;align-items:stretch"><button class="btn danger" id="remove-once">Remove only this transaction</button><button class="btn" id="exclude-future">Exclude matching future imports</button><button class="btn ghost" id="cancel-remove">Cancel</button></div>');
+    $('#cancel-remove', x.el).onclick = () => x.close();
+    $('#remove-once', x.el).onclick = async () => { try { await api('/transactions/' + id, { method:'DELETE' }); x.close(); toast('Transaction removed'); refreshBadge(); done && done(); } catch(e) { fail(e); } };
+    $('#exclude-future', x.el).onclick = async () => {
+      if (!await confirmBox({ title:'Save an exclusion rule?', body:'This will exclude future transactions matching the same account, merchant, amount and direction. Check that repeated genuine payments should also be excluded.', ok:'Save rule', danger:true })) return;
+      try { await api('/exclusions',{method:'POST',body:{transaction_id:id}}); x.close(); toast('Exclusion saved'); refreshBadge(); done && done(); } catch(e) { fail(e); }
+    };
+  };
   const exclude = document.createElement('button'); exclude.className='btn sm danger'; exclude.textContent='Delete and exclude future matches';
   $('#tdel',m.el).after(exclude);
   exclude.onclick=async()=>{if(!await confirmBox({title:'Delete and permanently exclude matching imports?',body:'Matches require the same account, merchant, description, direction and amount. Repeated genuine payments could also match. Remove the rule later in Linked money.',ok:'Confirm exclusion',danger:true}))return;
@@ -152,12 +179,13 @@ async function openTxn(id, done) {
 /* ---------- history ---------- */
 routes.transactions = async (main, [pre]) => {
   const f = { q: '', category: '', account: '', status: '', type: '', from: '', to: '', min: '', max: '', sort: 'date_desc', page: 1, dup: '' };
+  if (!pre) { try { Object.assign(f, JSON.parse(sessionStorage.getItem('spendflow-history') || '{}')); } catch {} }
   if (pre === 'duplicates') f.dup = 'suspected';
   else if (pre === 'uncategorized') f.category = 'uncategorized';
   else if (pre && pre.startsWith('cat-')) { const [, c, mo] = pre.split('-').concat([]); f.category = c === 'uncategorized' ? 'uncategorized' : c; if (mo) { const y = pre.split('-')[2], mm = pre.split('-')[3]; f.from = `${y}-${mm}-01`; f.to = `${y}-${mm}-31`; } }
   let selected = new Set(), data = null, timer;
   main.innerHTML = `<div class="head"><div><h1>${f.dup ? 'Possible duplicates' : 'Transactions'}</h1><p class="sub" id="sub"></p></div><div class="row"><a class="btn sm" href="/api/export.csv" download>Export CSV</a><button class="btn primary sm" id="imp">Import</button></div></div>
-    <div id="dupbox"></div>
+    <div id="dupbox"></div><div class="row" style="margin-bottom:12px"><button class="btn sm" id="add-manual">+ Add transaction</button><a class="btn sm" href="#/calendar">Calendar</a><button class="btn sm" id="show-removed">Removed transactions</button></div>
     <div class="card flat" style="margin-bottom:16px"><div class="grid g3" style="margin-bottom:10px"><input id="q" type="search" placeholder="Search merchant, note, amount…" aria-label="Search" value="${esc(f.q)}">
       <select id="fcat" aria-label="Category"><option value="">All categories</option><option value="uncategorized">Needs a category</option>${S.cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
       <select id="facc" aria-label="Account"><option value="">All accounts</option>${S.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div>
@@ -170,11 +198,14 @@ routes.transactions = async (main, [pre]) => {
     <div id="list"></div><div id="selbar"></div>`;
   $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
   $('#imp').onclick = () => openImport();
+  $('#add-manual').onclick = () => manualTransaction(todayIso(), load);
+  $('#show-removed').onclick = () => { f.include_removed = f.include_removed ? '' : 1; $('#show-removed').textContent = f.include_removed ? 'Hide removed' : 'Removed transactions'; load(); };
   const bind = { q: 'q', category: 'fcat', account: 'facc', type: 'ftype', sort: 'fsort', from: 'ffrom', to: 'fto', min: 'fmin', max: 'fmax' };
   Object.entries(bind).forEach(([k, id]) => { $('#' + id).oninput = (e) => { f[k] = e.target.value; f.page = 1; clearTimeout(timer); timer = setTimeout(load, k === 'q' || k === 'min' || k === 'max' ? 300 : 0); }; });
   $('#frec').onchange = (e) => { f.recurring = e.target.checked ? 1 : ''; f.page = 1; load(); };
 
   async function load() {
+    sessionStorage.setItem('spendflow-history', JSON.stringify(f));
     const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v !== '' && v != null)).toString();
     $('#list').innerHTML = '<div class="card"><div class="skel" style="height:260px"></div></div>';
     try { data = await api('/transactions?' + qs); } catch (e) { $('#list').innerHTML = `<div class="err-box">${esc(e.message)}</div>`; return; }
@@ -184,7 +215,7 @@ routes.transactions = async (main, [pre]) => {
     $('#sub').textContent = `${data.total} transaction${data.total === 1 ? '' : 's'} · in ${money(data.money_in)} · out ${money(data.money_out)}`;
     if (f.dup) loadDups();
     if (!data.items.length) { $('#list').innerHTML = `<div class="empty card"><div class="big">🔍</div><h2>${f.dup ? 'No duplicates to check' : 'Nothing matches'}</h2><p>${f.dup ? 'Nice and tidy.' : 'Try clearing a filter, or import a statement.'}</p></div>`; return; }
-    $('#list').innerHTML = `<div class="card"><div class="list">${data.items.map((t) => `<div class="row" style="flex-wrap:nowrap"><input type="checkbox" data-sel="${t.id}" style="width:18px;min-height:0;flex:none" aria-label="Select" ${selected.has(t.id) ? 'checked' : ''}><div style="flex:1;min-width:0">${txnRow(t)}</div></div>`).join('')}</div>
+    $('#list').innerHTML = `<div class="card"><div class="list">${data.items.map((t) => `<div class="row" style="flex-wrap:nowrap">${t.removed_at ? `<button class="btn sm" data-restore="${t.id}">Restore</button>` : ''}<input type="checkbox" data-sel="${t.id}" style="width:18px;min-height:0;flex:none" aria-label="Select" ${selected.has(t.id) ? 'checked' : ''}><div style="flex:1;min-width:0">${txnRow(t)}</div></div>`).join('')}</div>
       ${data.pages > 1 ? `<div class="row" style="justify-content:center;margin-top:14px"><button class="btn sm" id="pp" ${f.page <= 1 ? 'disabled' : ''}>Previous</button><span class="small muted">Page ${data.page} of ${data.pages}</span><button class="btn sm" id="np" ${f.page >= data.pages ? 'disabled' : ''}>Next</button></div>` : ''}</div>`;
     $('#pp') && ($('#pp').onclick = () => { f.page--; load(); }); $('#np') && ($('#np').onclick = () => { f.page++; load(); });
     selbar();
@@ -200,14 +231,16 @@ routes.transactions = async (main, [pre]) => {
   const bulkDup = async (action) => { try { await api('/duplicates/resolve-all', { method: 'POST', body: { action } }); toast('Done'); refreshBadge(); load(); } catch (e) { fail(e); } };
   function selbar() {
     $('#selbar').innerHTML = selected.size ? `<div class="sel-bar"><b>${selected.size} selected</b><select id="bcat" style="width:auto;background:transparent;color:inherit;border-color:rgba(255,255,255,.3)" aria-label="Set category"><option value="">Set category…</option>${S.cats.map((c) => `<option style="color:#000" value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
-      <button class="btn sm" data-b="pending">Send to review</button><button class="btn sm" data-b="delete">Delete</button><button class="btn sm" data-b="clear">Clear</button></div>` : '';
+      <button class="btn sm" data-b="pending">Send to review</button><button class="btn sm" data-b="delete">Remove</button><button class="btn sm" data-b="clear">Clear</button></div>` : '';
     const bc = $('#bcat'); bc && (bc.onchange = () => bulk('categorize', { category_id: +bc.value }));
-    $$('[data-b]').forEach((b) => (b.onclick = async () => { const a = b.dataset.b; if (a === 'clear') { selected.clear(); draw(); } else if (a === 'delete') { if (await confirmBox({ title: `Delete ${selected.size} transactions?`, body: 'This removes them from your history and totals and can’t be undone.', ok: 'Delete', danger: true })) bulk('delete'); } else bulk(a); }));
+    $$('[data-b]').forEach((b) => (b.onclick = async () => { const a = b.dataset.b; if (a === 'clear') { selected.clear(); draw(); } else if (a === 'delete') { if (await confirmBox({ title: `Delete ${selected.size} transactions?`, body: 'Only the selected transactions will be hidden. Their records remain recoverable.', ok: 'Delete', danger: true })) bulk('delete'); } else bulk(a); }));
   }
   async function bulk(action, extra = {}) {
     try { const r = await api('/transactions/bulk', { method: 'POST', body: { ids: [...selected], action, ...extra } }); selected.clear(); refreshBadge(); toast(`${r.changed} updated`, r.undo.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); refreshBadge(); load(); } } : {}); load(); } catch (e) { fail(e); }
   }
   main.onclick = (e) => {
+    const restore = e.target.closest('[data-restore]');
+    if (restore) { api('/transactions/' + restore.dataset.restore + '/restore', { method: 'POST' }).then(load).catch(fail); return; }
     const cb = e.target.closest('[data-sel]');
     if (cb) { +cb.dataset.sel && (cb.checked ? selected.add(+cb.dataset.sel) : selected.delete(+cb.dataset.sel)); selbar(); return; }
     const keep = e.target.closest('[data-keep]'), drop = e.target.closest('[data-drop]');
@@ -265,7 +298,7 @@ routes.plan = async (main) => {
 
 /* ---------- settings ---------- */
 routes.settings = async (main) => {
-  const [sts, accs, cats] = await Promise.all([api('/statements'), api('/accounts'), api('/categories')]);
+  const [sts, accs, cats, exclusions, classificationRules, flows] = await Promise.all([api('/statements'), api('/accounts'), api('/categories'), api('/exclusions'), api('/classification-rules'), api('/flows')]);
   S.accounts = accs; S.cats = cats;
   main.innerHTML = `<div class="head"><div><h1>Settings</h1><p class="sub">${esc(S.user.email)}</p></div><button class="btn" id="out">Sign out</button></div>
     <div class="card" style="margin-bottom:16px"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Statements</h2><button class="btn sm primary" id="imp">Import</button></div>
@@ -274,20 +307,31 @@ routes.settings = async (main) => {
     <div class="grid g2" style="margin-bottom:16px">
       <div class="card"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Accounts</h2></div><div class="list">${accs.map((a) => `<div><div class="grow"><b>${esc(a.name)}</b><div class="small muted">${esc(a.type)}${a.last4 ? ' ••' + esc(a.last4) : ''} · ${a.txn_count} transactions</div></div><button class="btn sm ghost" data-aren="${a.id}" data-n="${esc(a.name)}">Rename</button><button class="btn sm ghost danger" data-adel="${a.id}" data-n="${esc(a.name)}">Delete</button></div>`).join('') || '<p class="muted small">Accounts appear when you import a statement.</p>'}</div></div>
       <div class="card"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Categories</h2><button class="btn sm" id="addc">+ New</button></div><div class="list">${cats.map((c) => `<div>${catDot(c)}<span class="grow">${esc(c.name)}</span><span class="small muted">${c.uses}</span>${c.builtin ? '' : `<button class="btn sm ghost danger" data-cdel="${c.id}" data-n="${esc(c.name)}" data-u="${c.uses}">Delete</button>`}</div>`).join('')}</div></div></div>
+    <div class="card" style="margin-bottom:16px"><h2>Remembered classifications</h2><p class="muted small">Exact merchant and direction matches only. Existing corrections are never reclassified.</p>
+      <div class="list">${classificationRules.map(r=>`<div><span class="grow"><b>${esc(r.merchant_key)}</b><div class="small muted">${esc(r.direction)}</div></span><select data-rule-cat="${r.id}" style="width:auto">${cats.map(x=>`<option value="${x.id}" ${x.id===r.category_id?'selected':''}>${esc(x.name)}</option>`).join('')}</select><button class="btn sm danger" data-rule-del="${r.id}">Remove</button></div>`).join('')||'<p class="muted small">No saved classifications.</p>'}</div></div>
+    <div class="card" style="margin-bottom:16px"><h2>Future import exclusions</h2><p class="muted small">Removing a rule stops future exclusions; previously removed transactions can be restored from history.</p>
+      <div class="list">${exclusions.map(r=>`<div><span class="grow"><b>${esc(r.merchant_key)}</b><div class="small muted">${esc(r.account_name)} · ${esc(r.direction)} · ${money(r.amount_minor)}</div></span><button class="btn sm danger" data-exclusion-del="${r.id}">Remove</button></div>`).join('')||'<p class="muted small">No exclusion rules.</p>'}</div></div>
+    <div class="card" style="margin-bottom:16px"><h2>Linked non-personal flows</h2><p class="muted small">Groups are excluded from personal spending and income without altering the source transactions.</p>
+      <div class="list">${flows.map(g=>`<div><span class="grow"><b>${esc(g.kind.replaceAll('_',' '))}</b><div class="small muted">${g.transactions.length} transactions · ${g.transactions.map(t=>money(t.amount_minor)).join(', ')}</div></span><button class="btn sm danger" data-flow-del="${g.id}">Unlink</button></div>`).join('')||'<p class="muted small">No linked flows.</p>'}</div></div>
     <div class="card" style="margin-bottom:16px"><h2 style="margin-bottom:6px">Appearance</h2><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div>
     <div class="card"><h2 style="margin-bottom:6px">Your data</h2><p class="muted small" style="margin-bottom:14px">Everything lives in this app's own database and upload folder. Nothing is shared.</p>
       <div class="row"><a class="btn" href="/api/export.csv" download>Export all as CSV</a><button class="btn danger" id="wipe">Delete all statements &amp; transactions</button><button class="btn danger" id="delacc">Delete my account</button></div></div>`;
   $('#imp').onclick = () => openImport();
+  $('[data-rule-cat]').forEach(el => { el.onchange = async () => { try { const rule = classificationRules.find(r=>r.id===+el.dataset.ruleCat); const newCat=cat(+el.value); await api('/classification-rules/'+rule.id,{method:'PATCH',body:{category_id:newCat.id,type:newCat.kind==='income'?'income':newCat.kind==='transfer'?'transfer':'expense'}}); toast('Rule updated'); } catch(e){fail(e);} }; });
   $('#out').onclick = async () => { await api('/auth/logout', { method: 'POST' }); S.user = null; renderAuth(); };
   const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
-  $$('#theme button').forEach((b) => { b.classList.toggle('on', b.dataset.t === cur); b.onclick = () => { document.documentElement.dataset.theme = b.dataset.t; try { localStorage.setItem('tally-theme', b.dataset.t); } catch { /* */ } $$('#theme button').forEach((x) => x.classList.toggle('on', x === b)); }; });
+  $$('#theme button').forEach((b) => { b.classList.toggle('on', b.dataset.t === cur); b.onclick = () => { document.documentElement.dataset.theme = b.dataset.t; try { localStorage.setItem('spendflow-theme', b.dataset.t); } catch { /* */ } $$('#theme button').forEach((x) => x.classList.toggle('on', x === b)); }; });
   $('#addc').onclick = () => { const m = modal(`<h2>New category</h2><div id="nerr"></div><div class="field"><label for="cn">Name</label><input id="cn" maxlength="40"></div><div class="field"><label for="ck">Type</label><select id="ck"><option value="expense">Spending</option><option value="income">Income</option><option value="savings">Savings</option></select></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="cgo">Create</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#cgo', m.el).onclick = async () => { try { await api('/categories', { method: 'POST', body: { name: $('#cn', m.el).value, kind: $('#ck', m.el).value, color: '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0') } }); m.close(); route(); } catch (e) { $('#nerr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } }; };
   $('#wipe').onclick = async () => { if (await confirmBox({ title: 'Delete all statements and transactions?', body: 'This removes every uploaded file and every transaction. Your account, categories, budgets and goals stay. This can’t be undone.', ok: 'Delete everything', danger: true, typed: 'DELETE' })) { try { await api('/data/wipe', { method: 'POST', body: { confirm: 'DELETE' } }); toast('All statements and transactions deleted'); refreshBadge(); route(); } catch (e) { fail(e); } } };
   $('#delacc').onclick = () => { const m = modal(`<h2>Delete your account?</h2><p class="muted">This permanently deletes your account, all transactions, uploaded files, budgets and goals. Enter your password to confirm.</p><div id="derr"></div><div class="field" style="margin-top:14px"><label for="dpw">Password</label><input id="dpw" type="password" autocomplete="current-password"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="dgo" style="background:var(--bad)">Delete account</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#dgo', m.el).onclick = async () => { try { await api('/auth/delete-account', { method: 'POST', body: { password: $('#dpw', m.el).value } }); m.close(); S.user = null; renderAuth(); } catch (e) { $('#derr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } }; };
   main.onclick = async (e) => {
     const sd = e.target.closest('[data-sdel]'), ad = e.target.closest('[data-adel]'), ar = e.target.closest('[data-aren]'), cd = e.target.closest('[data-cdel]');
+    const ruleDel = e.target.closest('[data-rule-del]'), exclusionDel = e.target.closest('[data-exclusion-del]'), flowDel = e.target.closest('[data-flow-del]');
     try {
-      if (sd) {
+      if (ruleDel) { if (await confirmBox({title:'Remove classification rule?',body:'Future imports will no longer use this rule.',ok:'Remove',danger:true})) {await api('/classification-rules/'+ruleDel.dataset.ruleDel,{method:'DELETE'});route();} }
+      else if (exclusionDel) { if (await confirmBox({title:'Remove exclusion rule?',body:'Future matching transactions will be imported normally.',ok:'Remove',danger:true})) {await api('/exclusions/'+exclusionDel.dataset.exclusionDel,{method:'DELETE'});route();} }
+      else if (flowDel) { if (await confirmBox({title:'Unlink these transactions?',body:'Original classifications and review statuses will be restored.',ok:'Unlink'})) {await api('/flows/'+flowDel.dataset.flowDel,{method:'DELETE'});route();} }
+      else if (sd) {
         const m = modal(`<h2>Delete this statement?</h2><p class="muted">The uploaded file will be deleted. What about the transactions imported from it?</p><div class="foot" style="flex-direction:column;align-items:stretch"><button class="btn" id="k">Delete the file, keep the transactions</button><button class="btn danger" id="a">Delete the file and its transactions</button><button class="btn ghost" data-x>Cancel</button></div>`);
         $('[data-x]', m.el).onclick = () => m.close();
         $('#k', m.el).onclick = async () => { await api(`/statements/${sd.dataset.sdel}`, { method: 'DELETE' }); m.close(); toast('File deleted'); route(); };
