@@ -789,7 +789,7 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         undo = txns.bulk(db, uid, [txn_id], "pending", {})["undo"]
         return {"txn": txns.get_txn(db, uid, txn_id), "undo": undo}
 
-    if db.execute("SELECT 1 FROM (SELECT txn_id FROM transaction_group_members UNION ALL SELECT txn_id FROM flow_group_members) WHERE txn_id=?", (txn_id,)).fetchone() and (
+    if db.execute("SELECT 1 FROM (SELECT txn_id FROM transaction_group_members UNION ALL SELECT txn_id FROM flow_group_members UNION ALL SELECT txn_id FROM people_transactions) WHERE txn_id=?", (txn_id,)).fetchone() and (
         ("category_id" in body and body["category_id"] != row["category_id"]) or body.get("splits") or
         ("type" in body and body["type"] != row["type"]) or
         ("direction" in body and body["direction"] != row["direction"]) or
