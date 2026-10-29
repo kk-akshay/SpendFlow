@@ -99,6 +99,18 @@ def logout(request: Request, response: Response, db=Depends(get_db)):
     return {"ok": True}
 
 
+@app.get("/api/auth/session")
+def auth_session(request: Request, db=Depends(get_db)):
+    """Safe startup check: an anonymous visitor is not an API error."""
+    try:
+        user = current_user(request, db)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+        return {"authenticated": False, "user": None}
+    return {"authenticated": True, "user": user}
+
+
 @app.get("/api/auth/me")
 def me(user=Depends(current_user)):
     return user
