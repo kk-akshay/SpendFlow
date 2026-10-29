@@ -191,13 +191,14 @@ const ICON = {
   review: '<rect x="5" y="4" width="14" height="16" rx="3"/><path d="M9 9h6M9 13h4"/>',
   transactions: '<path d="M4 7h16M4 12h16M4 17h10"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/>',
+  people: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
   plan: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>',
 };
 const svg = (n) => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
 
 function renderShell() {
-  const items = [['dashboard', 'Home'], ['review', 'Review'], ['transactions', 'History'], ['calendar', 'Calendar'], ['groups', 'Linked money'], ['plan', 'Plan'], ['settings', 'Settings']];
+  const items = [['dashboard', 'Home'], ['review', 'Review'], ['transactions', 'History'], ['calendar', 'Calendar'], ['groups', 'Linked money'], ['people', 'People & Loans'], ['plan', 'Plan'], ['settings', 'Settings']];
   $('#app').innerHTML = `<nav class="nav" aria-label="Main"><div class="brand"><i></i>SpendFlow</div>
     ${items.map(([r, l]) => `<a class="item" data-r="${r}" href="#/${r}" ${r === 'review' ? '' : ''}>${svg(r)}<span>${l}</span>${r === 'review' ? '<span class="badge" id="nav-badge" hidden></span>' : ''}</a>`).join('')}
     <div class="grow"></div>
