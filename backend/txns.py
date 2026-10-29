@@ -84,6 +84,10 @@ def suggest(db, user_id: int, t: dict) -> dict | None:
     key = t.get("merchant_key") or ""
     name = t.get("merchant") or "this merchant"
     if key:
+        saved = db.execute("SELECT category_id FROM classification_rules WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=?",
+                           (user_id,t["account_id"],key,t["direction"])).fetchone()
+        if saved:
+            return {"category_id":saved["category_id"],"source":"remembered","reason":"You chose to remember this classification"}
         r = db.execute(
             "SELECT mr.category_id, mr.hits, c.name FROM merchant_rules mr JOIN categories c ON c.id=mr.category_id "
             "WHERE mr.user_id=? AND mr.merchant_key=?", (user_id, key)).fetchone()
@@ -240,8 +244,9 @@ def apply_category(db, user_id: int, txn_id: int, p: dict) -> dict:
                 db.execute("UPDATE transactions SET transfer_pair_id=NULL, flags=? WHERE id=?",
                            (_strip_transfer_flags(t["flags"]), txn_id))
 
-    if cat and t["merchant_key"]:
-        _learn(db, user_id, t["merchant_key"], cat["id"])
+    if p.get("remember") and cat and t["merchant_key"]:
+        from . import ledger
+        ledger.remember(db, user_id, t, cat["id"], ttype)
 
     applied = 0
     if p.get("apply_similar") and cat and t["merchant_key"]:
@@ -294,13 +299,14 @@ def _build_item(db, user_id: int, row) -> dict:
     return {"txn": t, "suggestion": suggest(db, user_id, t), "similar_count": similar, "pair": pair}
 
 
-def next_item(db, user_id: int, scope: str = "pending") -> dict | None:
+def next_item(db, user_id: int, scope: str = "pending", order: str = "desc") -> dict | None:
     if scope == "skipped":
-        order, status = "t.skipped_at, t.id", "skipped"
+        sort, status = "t.skipped_at, t.id", "skipped"
     else:
-        order, status = "t.date, COALESCE(t.time,''), t.id", "pending"
+        sort, status = "t.date, COALESCE(t.time,''), t.id", "pending"
+    sort += " ASC" if order == "asc" else " DESC"
     row = db.execute(
-        SELECT_TXN + f" WHERE t.user_id=? AND t.status=? AND {DUP_OK} ORDER BY {order} LIMIT 1", (user_id, status)).fetchone()
+        SELECT_TXN + f" WHERE t.user_id=? AND t.status=? AND {DUP_OK} ORDER BY {sort} LIMIT 1", (user_id, status)).fetchone()
     return _build_item(db, user_id, row) if row else None
 
 
