@@ -98,12 +98,12 @@ async function route() {
   const [name, ...rest] = (location.hash.replace(/^#\/?/, '') || 'dashboard').split('/');
   const fn = routes[name] || routes.dashboard;
   const active=routes[name]?name:'dashboard';
-  $('.nav a.item,.mobile-nav a.item').forEach(a=>{
+  $$('.nav a.item,.mobile-nav a.item').forEach(a=>{
     const on=a.dataset.r===active;
     a.classList.toggle('on',on);
     if(on)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');
   });
-  $('[data-more-link]').forEach(a=>a.classList.toggle('on',a.dataset.moreLink===active));
+  $$('[data-more-link]').forEach(a=>a.classList.toggle('on',a.dataset.moreLink===active));
   const more=$('#mobile-more-button'),secondary=['review','people','plan','settings'].includes(active);
   if(more){more.classList.toggle('on',secondary);if(secondary)more.setAttribute('aria-current','page');else more.removeAttribute('aria-current');}
   closeMore(false);
