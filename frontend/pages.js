@@ -107,11 +107,12 @@ async function openTxn(id, done) {
       <div class="field"><label for="ta">Amount</label><input id="ta" inputmode="decimal" value="${(t.amount_minor / 100).toFixed(2)}" ${t.is_split ? 'disabled' : ''}></div>
       <div class="field"><label for="tdir">Direction</label><select id="tdir"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></div></div></details>
     <label class="check small"><input type="checkbox" id="tremember"> Remember category and type for future imports</label>
-    <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
+    <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button><button class="btn sm" id="tperson">Track with person</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
   $$('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
   $('[data-x]', m.el).onclick = () => m.close();
   const patch = async (body, msg) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
+  $('#tperson',m.el).onclick=()=>{m.close();personLinkDialog(id,done);};
   $('#tflow', m.el).onclick = async () => {
     try {
       const suggestions = await api('/flows/suggestions/' + id);
