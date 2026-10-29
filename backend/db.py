@@ -1,4 +1,5 @@
 """SQLite schema and connection helpers. Money is stored as integer minor units (paise/cents)."""
+import os
 import sqlite3
 
 from .config import DB_PATH
@@ -257,6 +258,8 @@ DEFAULT_CATEGORIES = [
 
 
 def connect() -> sqlite3.Connection:
+    if os.environ.get('DATABASE_URL'):
+        raise RuntimeError('Use get_db() to obtain a PostgreSQL connection')
     conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -266,6 +269,10 @@ def connect() -> sqlite3.Connection:
 
 
 def init_db() -> None:
+    if os.environ.get('DATABASE_URL'):
+        from .postgres import init_postgres
+        init_postgres(SCHEMA)
+        return
     conn = connect()
     try:
         conn.executescript(SCHEMA)
@@ -282,6 +289,11 @@ def init_db() -> None:
 
 def get_db():
     """FastAPI dependency: one connection per request."""
+    if os.environ.get("DATABASE_URL"):
+        from .postgres import PgConnection, pool
+        with pool().connection() as connection:
+            yield PgConnection(connection)
+        return
     conn = connect()
     try:
         yield conn
@@ -289,7 +301,7 @@ def get_db():
         conn.close()
 
 
-def seed_categories(db: sqlite3.Connection, user_id: int) -> None:
+def seed_categories(db, user_id: int) -> None:
     for i, (name, color, kind) in enumerate(DEFAULT_CATEGORIES):
         db.execute(
             "INSERT OR IGNORE INTO categories(user_id,name,color,kind,builtin,sort) VALUES(?,?,?,?,1,?)",
