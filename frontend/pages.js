@@ -198,7 +198,7 @@ routes.transactions = async (main, [pre]) => {
     <div id="list"></div><div id="selbar"></div>`;
   $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
   $('#imp').onclick = () => openImport();
-  $('#add-manual').onclick = () => manualTxn(() => load());
+  $('#add-manual').onclick = () => manualTransaction(todayIso(), load);
   $('#show-removed').onclick = () => { f.include_removed = f.include_removed ? '' : 1; $('#show-removed').textContent = f.include_removed ? 'Hide removed' : 'Removed transactions'; load(); };
   const bind = { q: 'q', category: 'fcat', account: 'facc', type: 'ftype', sort: 'fsort', from: 'ffrom', to: 'fto', min: 'fmin', max: 'fmax' };
   Object.entries(bind).forEach(([k, id]) => { $('#' + id).oninput = (e) => { f[k] = e.target.value; f.page = 1; clearTimeout(timer); timer = setTimeout(load, k === 'q' || k === 'min' || k === 'max' ? 300 : 0); }; });
