@@ -222,3 +222,19 @@ input[type="checkbox"],input[type="radio"]{accent-color:var(--accent)}
 }
 @media(max-width:360px){.mobile-nav .item{font-size:9px}.header-brand{font-size:18px}}
 @media(prefers-reduced-motion:reduce){.theme-toggle .nav-icon{transition:none}}
+
+
+/* Import preview: prevent amount columns collapsing on narrow phones.
+   Keep a horizontally scrollable table rather than wrapping currency digits. */
+@media (max-width:760px) {
+  .card.flat .scroll-x { width:100%; max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; }
+  .card.flat .scroll-x table { width:760px; min-width:760px; table-layout:fixed; }
+  .card.flat .scroll-x th:nth-child(1), .card.flat .scroll-x td:nth-child(1) { width:108px; white-space:nowrap; }
+  .card.flat .scroll-x th:nth-child(2), .card.flat .scroll-x td:nth-child(2) { width:315px; overflow-wrap:normal; word-break:normal; }
+  .card.flat .scroll-x th:nth-child(3), .card.flat .scroll-x td:nth-child(3) { width:130px; white-space:nowrap; word-break:keep-all; }
+  .card.flat .scroll-x th:nth-child(4), .card.flat .scroll-x td:nth-child(4) { width:185px; white-space:nowrap; }
+  .card.flat .scroll-x td:nth-child(4) .btn { padding:6px 10px; }
+  .card.flat .scroll-x td:nth-child(2) .ell { max-width:290px !important; }
+  .card.flat .scroll-x td:nth-child(2) .flag { overflow-wrap:break-word; white-space:normal; }
+  .card.flat .scroll-x td { vertical-align:middle; }
+}
