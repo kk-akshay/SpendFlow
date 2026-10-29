@@ -1,7 +1,7 @@
 name: Ledger regression checks
 on:
   push:
-    branches: [feat/transaction-controls-and-ledger]
+    branches: [feature/spendflow-transactions]
   pull_request:
     paths:
       - "backend/**"
