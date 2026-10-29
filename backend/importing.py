@@ -172,7 +172,7 @@ def commit_statement(db, user_id: int, statement_id: int) -> dict:
             db.execute("UPDATE transactions SET removed_at=?,excluded_rule_id=? WHERE id=?", (now(),rule["id"],tid))
             excluded += 1
             continue
-        learned = db.execute("SELECT category_id,type FROM classification_rules WHERE user_id=? AND merchant_key=? AND direction=?", (user_id,t["merchant_key"],t["direction"])).fetchone()
+        learned = db.execute("SELECT category_id,type FROM classification_rules WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=?", (user_id,t["account_id"],t["merchant_key"],t["direction"])).fetchone()
         if learned and t["dup_status"] != "suspected":
             db.execute("UPDATE transactions SET category_id=?,type=?,status='categorized',reviewed_at=? WHERE id=?", (learned["category_id"],learned["type"],now(),tid))
             auto_classified += 1
