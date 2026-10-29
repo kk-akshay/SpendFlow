@@ -162,17 +162,6 @@ CREATE TABLE IF NOT EXISTS exclusion_rules(
   UNIQUE(user_id, account_id, merchant_key, direction, amount_minor)
 );
 
-CREATE TABLE IF NOT EXISTS classification_rules(
-  id INTEGER PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  merchant_key TEXT NOT NULL,
-  direction TEXT NOT NULL CHECK(direction IN ('debit','credit')),
-  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-  type TEXT NOT NULL CHECK(type IN ('income','expense','transfer')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(user_id, merchant_key, direction)
-);
-
 CREATE TABLE IF NOT EXISTS flow_groups(
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
