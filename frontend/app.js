@@ -56,13 +56,26 @@ function modal(html, { onClose } = {}) {
   const prev = document.activeElement;
   const scrim = document.createElement('div');
   scrim.className = 'scrim';
-  scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`;
-  const close = () => { scrim.remove(); document.removeEventListener('keydown', onKey, true); prev && prev.focus && prev.focus(); onClose && onClose(); };
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-  scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) close(); });
+  scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
+  // Prevent scroll on the page behind the dialog, including on mobile.
+  const previousOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    scrim.remove();
+    document.removeEventListener('keydown', onKey, true);
+    if (!document.querySelector('.scrim')) document.body.style.overflow = previousOverflow;
+    prev && prev.isConnected && prev.focus && prev.focus({ preventScroll: true });
+    onClose && onClose();
+  };
+  const onKey = (e) => { if (e.key === 'Escape' && scrim.isConnected) { e.preventDefault(); e.stopPropagation(); close(); } };
+  scrim.addEventListener('click', (e) => { if (e.target === scrim) close(); });
   document.addEventListener('keydown', onKey, true);
   document.body.append(scrim);
-  const first = $('input,select,textarea,button.primary', scrim); first && first.focus();
+  const first = $('input,select,textarea,button.primary,button[data-x]', scrim);
+  first && first.focus({ preventScroll: true });
   return { el: $('.modal', scrim), close };
 }
 function confirmBox({ title, body, ok = 'Confirm', danger = false, typed }) {
