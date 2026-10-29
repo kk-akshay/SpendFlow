@@ -118,8 +118,14 @@ def pool():
     url = os.environ["DATABASE_URL"]
     if not url.startswith(("postgresql://", "postgres://")):
         raise ValueError("DATABASE_URL must be a PostgreSQL connection string")
-    instance = ConnectionPool(conninfo=url, min_size=0, max_size=5,
-                              timeout=20, kwargs={"row_factory": dict_row})
+    instance = ConnectionPool(
+        conninfo=url, min_size=0, max_size=5, timeout=20, open=True,
+        kwargs={"row_factory": dict_row},
+        # Neon pooled connections may be closed while SpendFlow is idle.
+        # Check before handing a cached connection to a request.
+        check=ConnectionPool.check_connection,
+        max_lifetime=300, max_idle=60,
+    )
     atexit.register(instance.close)
     return instance
 
