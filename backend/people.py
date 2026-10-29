@@ -60,3 +60,22 @@ def unlink(db,uid,tid):
     db.execute("UPDATE transactions SET type=?,category_id=?,status=?,reviewed_at=?,skipped_at=? WHERE id=?",
                (r["original_type"],r["original_category_id"],r["original_status"],r["original_reviewed_at"],r["original_skipped_at"],tid))
     db.execute("DELETE FROM people_transactions WHERE txn_id=? AND user_id=?",(tid,uid))
+
+def candidates(db,uid,pid):
+    p=own(db,uid,pid)
+    aliases={a["upi_id"] for a in db.execute("SELECT upi_id FROM people_upi WHERE person_id=?",(pid,))}
+    rows=db.execute("SELECT t.id,t.date,t.direction,t.amount_minor,t.merchant,t.description,a.name AS account_name "
+                    "FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.user_id=? AND t.status!='staged' "
+                    "AND t.removed_at IS NULL AND (t.dup_status IS NULL OR t.dup_status='cleared') "
+                    "AND NOT EXISTS(SELECT 1 FROM people_transactions l WHERE l.txn_id=t.id) "
+                    "AND NOT EXISTS(SELECT 1 FROM transaction_group_members l WHERE l.txn_id=t.id) "
+                    "AND NOT EXISTS(SELECT 1 FROM flow_group_members l WHERE l.txn_id=t.id) "
+                    "ORDER BY t.date DESC,t.id DESC LIMIT 1500",(uid,)).fetchall()
+    matches=[]
+    for t in rows:
+        ids=set(upi_ids(t["description"]))
+        exact=bool(aliases & ids)
+        name_match=bool(len(p["name"].strip())>=4 and p["name"].strip().casefold() in (t["merchant"] or "").casefold())
+        if exact or name_match:
+            matches.append({**dict(t),"reason":"Matching UPI ID" if exact else "Similar name (confirm identity)"})
+    return matches[:100]
