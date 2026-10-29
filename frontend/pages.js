@@ -107,11 +107,28 @@ async function openTxn(id, done) {
       <div class="field"><label for="ta">Amount</label><input id="ta" inputmode="decimal" value="${(t.amount_minor / 100).toFixed(2)}" ${t.is_split ? 'disabled' : ''}></div>
       <div class="field"><label for="tdir">Direction</label><select id="tdir"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></div></div></details>
     <label class="check small"><input type="checkbox" id="tremember"> Remember category and type for future imports</label>
-    <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
+    <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
   $$('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
   $('[data-x]', m.el).onclick = () => m.close();
   const patch = async (body, msg) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
+  $('#tflow', m.el).onclick = async () => {
+    try {
+      const suggestions = await api('/flows/suggestions/' + id);
+      m.close();
+      const x = modal(`<h2>Link non-personal transactions</h2><p class="muted small">Select only payments that belong to the same transfer, loan, reimbursement or pass-through. These are suggestions, not confirmed matches.</p>
+        <div class="field"><label>Flow type</label><select id="flow-kind"><option value="pass_through">Pass-through payment</option><option value="temporary_transfer">Temporary transfer</option><option value="loan">Loan</option><option value="repayment">Repayment</option><option value="reimbursement">Reimbursement</option></select></div>
+        <div class="list">${suggestions.map(s=>`<label class="row" style="flex-wrap:nowrap"><input type="checkbox" data-flow-txn="${s.txn.id}" style="width:20px;flex:none"><span class="grow"><b>${esc(s.txn.merchant||s.txn.description)}</b><span class="small muted"> · ${fdate(s.txn.date)} · ${esc(s.txn.account_name)} ${s.same_amount?' · Same amount':''}</span></span><b>${money(s.txn.amount_minor)}</b></label>`).join('')||'<p class="muted">No suggested incoming/outgoing partners in the surrounding 30 days.</p>'}</div>
+        <div class="foot"><button class="btn" id="flow-cancel">Cancel</button><button class="btn primary" id="flow-link">Link selected</button></div>`);
+      $('#flow-cancel',x.el).onclick=()=>x.close();
+      $('#flow-link',x.el).onclick=async()=>{
+        const ids=[id,...$('[data-flow-txn]:checked',x.el).map(el=>+el.dataset.flowTxn)];
+        if(ids.length<2)return toast('Select at least one related transaction',{err:true});
+        if(!await confirmBox({title:'Confirm non-personal flow?',body:'The selected transactions will no longer count as personal income or expenses. All original payments remain visible and can be unlinked.',ok:'Link transactions'}))return;
+        try { await api('/flows',{method:'POST',body:{kind:$('#flow-kind',x.el).value,transaction_ids:ids}});x.close();toast('Transactions linked');done&&done();} catch(e){fail(e);}
+      };
+    } catch(e){fail(e);}
+  };
   $('#tdel', m.el).onclick = async () => {
     m.close();
     const x = modal('<h2>Remove transaction</h2><p class="muted small">Choose whether to remove only this transaction or also remember an exact rule for future imports.</p><div class="foot" style="flex-direction:column;align-items:stretch"><button class="btn danger" id="remove-once">Remove only this transaction</button><button class="btn" id="exclude-future">Exclude matching future imports</button><button class="btn ghost" id="cancel-remove">Cancel</button></div>');
