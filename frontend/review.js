@@ -10,6 +10,9 @@ routes.review = async (main) => {
   let lastUndo = null;
   let busy = false;
   let typeOverride = null;
+  let availableTags = [];
+  let selectedTagIds = [];
+  const loadTags = async () => { try { availableTags = await api('/tags'); } catch { availableTags = []; } };
 
   const load = async () => { state = await api('/review/next?scope=' + scope + '&order=' + order); draw(); refreshBadge(); };
 
@@ -43,6 +46,14 @@ routes.review = async (main) => {
           ${t.flags.map((f) => `<div class="flag">⚠ ${esc(f)}</div>`).join('')}
           ${item.pair ? `<div class="flag" style="color:var(--accent)">↔ Matches ${money(item.pair.amount_minor)} in ${esc(item.pair.account_name)} on ${fdate(item.pair.date)}</div>` : ''}
         </article></div>
+      <div class="field review-tags" style="margin-top:18px">
+        <label>Tags (optional) · Trip, person or project</label>
+        <div class="row" style="gap:7px">
+          ${availableTags.map(tag => `<label class="check small" style="margin:0;padding:6px 10px;border:1px solid var(--line);border-radius:999px"><input type="checkbox" data-tag-id="${tag.id}" ${selectedTagIds.includes(tag.id) ? 'checked' : ''} style="width:16px;height:16px"> ${esc(tag.name)}</label>`).join('')}
+          <button class="btn sm" id="create-review-tag" type="button">+ Add tag</button>
+        </div>
+        <div class="small muted" style="margin-top:6px">Tags don't change whether a transaction counts as an expense, income or loan.</div>
+      </div>
       <div class="ask">What was this transaction for?</div>
       ${sgCat ? `<div class="suggest"><span class="dot" style="background:var(--shade-2);width:14px;height:14px"></span>
         <div class="grow"><b>${esc(sgCat.name)}?</b><span class="small muted">${esc(sg.reason)}</span></div>
@@ -90,6 +101,14 @@ routes.review = async (main) => {
       const body = { ...payload, note: opts.note || undefined, recurring: opts.recurring || undefined, remember: !!opts.remember, apply_similar: opts.similar && state.item.similar_count > 0 && !!payload.category_id };
       if (typeOverride) body.type = typeOverride;
       const r = await api(`/review/${t.id}/categorize?scope=${scope}&order=${order}`, { method: 'POST', body });
+      if (selectedTagIds.length) {
+        try {
+          await api('/transactions/' + t.id + '/tags', { method: 'PUT', body: { tag_ids: selectedTagIds } });
+        } catch (tagError) {
+          toast('Category saved but tags could not be saved: ' + tagError.message, { err: true });
+        }
+      }
+      selectedTagIds = [];
       lastUndo = r.undo; state = { item: r.item, progress: r.progress }; resetOpts();
       if (r.applied_similar) toast(`Applied to ${r.applied_similar} similar transaction${r.applied_similar > 1 ? 's' : ''} too`, { action: 'Undo', onAction: undo });
       setTimeout(draw, 160);
@@ -127,6 +146,20 @@ routes.review = async (main) => {
     $('#accept') && ($('#accept').onclick = accept);
     $('#review-order').onchange = (e) => { order = e.target.value; localStorage.setItem('spendflow-review-order', order); load(); };
     $('#remember').onchange = (e) => { opts.remember = e.target.checked; };
+    $('[data-tag-id]', main).forEach(el => { el.onchange = () => {
+      selectedTagIds = $('[data-tag-id]:checked', main).map(x => +x.dataset.tagId);
+    }; });
+    $('#create-review-tag').onclick = () => {
+      const m = modal('<h2>New transaction tag</h2><div id="tag-error"></div><div class="field"><label>Name</label><input id="new-tag-name" maxlength="80" placeholder="e.g. Goa trip"></div><div class="field"><label>Type</label><select id="new-tag-kind"><option value="trip">Trip</option><option value="person">Person / beneficiary</option><option value="custom">Other</option></select></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="save-new-tag">Add tag</button></div>');
+      $('[data-x]', m.el).onclick = () => m.close();
+      $('#save-new-tag', m.el).onclick = async () => {
+        try {
+          const tag = await api('/tags', { method: 'POST', body: { name: $('#new-tag-name', m.el).value, kind: $('#new-tag-kind', m.el).value } });
+          if (!selectedTagIds.includes(tag.id)) selectedTagIds.push(tag.id);
+          await loadTags(); m.close(); draw();
+        } catch (e) { $('#tag-error', m.el).textContent = e.message; }
+      };
+    };
     $('#b-skip').onclick = skip; $('#b-undo').onclick = undo;
     $('#b-rec').onclick = () => { opts.recurring = !opts.recurring; draw(); };
     $('#b-note').onclick = () => { opts.showNote = !opts.showNote; draw(); if (opts.showNote) $('#note').focus(); };
@@ -232,5 +265,6 @@ routes.review = async (main) => {
   }
   document.addEventListener('keydown', onKey);
   S.cleanup = () => document.removeEventListener('keydown', onKey);
+  await loadTags();
   await load();
 };
