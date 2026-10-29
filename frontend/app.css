@@ -146,3 +146,6 @@ td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top} td.r,
 @media(max-width:390px){.nav a.item{font-size:9px}.cats{gap:6px}.cat{font-size:12px;padding:10px 3px}}
 
 @media(max-width:760px){.nav{overflow-x:auto;justify-content:flex-start;gap:4px;scrollbar-width:none}.nav a.item{flex:1 0 auto;min-width:48px}.nav::-webkit-scrollbar{display:none}}
+
+/* Responsive refinements using existing components */
+@media(max-width:560px){.head .row{max-width:100%}.txn{min-width:0}.txn .grow{min-width:0}.modal{max-height:92dvh;overflow-y:auto}.scroll-x{max-width:100%;-webkit-overflow-scrolling:touch}.grid .field{min-width:0}main{overflow-wrap:anywhere}.btn,.nav a.item{min-height:42px}}

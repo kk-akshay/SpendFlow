@@ -41,7 +41,7 @@ routes.dashboard = async (main, [month]) => {
   const d = await api('/dashboard' + (month ? '?month=' + month : ''));
   if (d.empty) {
     main.innerHTML = `<div class="empty card" style="margin-top:40px"><div class="big">🌱</div><h2>Let's see where your money goes</h2>
-      <p>Upload a bank or Google Pay statement. Tally reads it, then asks you about each transaction one at a time.</p>
+      <p>Upload a bank or Google Pay statement. SpendFlow reads it, then asks you about each transaction one at a time.</p>
       <button class="btn primary" id="e-imp">Import your first statement</button></div>`;
     $('#e-imp').onclick = () => openImport(); return;
   }
@@ -106,12 +106,13 @@ async function openTxn(id, done) {
       <div class="field"><label for="tm">Merchant</label><input id="tm" value="${esc(t.merchant)}" maxlength="80"></div><div class="field"><label for="td">Date</label><input id="td" type="date" value="${esc(t.date)}"></div>
       <div class="field"><label for="ta">Amount</label><input id="ta" inputmode="decimal" value="${(t.amount_minor / 100).toFixed(2)}" ${t.is_split ? 'disabled' : ''}></div>
       <div class="field"><label for="tdir">Direction</label><select id="tdir"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></div></div></details>
-    <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Delete</button><button class="btn sm" id="trev">Send to review</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
+    <label class="check small"><input type="checkbox" id="tremember"> Remember category and type for future imports</label>
+    <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
   $$('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
   $('[data-x]', m.el).onclick = () => m.close();
   const patch = async (body, msg) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
-  $('#tdel', m.el).onclick = async () => { m.close(); if (await confirmBox({ title: 'Delete this transaction?', body: 'It will be removed from your history and totals.', ok: 'Delete', danger: true })) { try { await api('/transactions/' + id, { method: 'DELETE' }); toast('Transaction deleted'); refreshBadge(); done && done(); } catch (e) { fail(e); } } };
+  $('#tdel', m.el).onclick = async () => { m.close(); if (await confirmBox({ title: 'Delete this transaction?', body: 'This hides only the selected transaction from totals and history, preserving its record.', ok: 'Delete', danger: true })) { try { await api('/transactions/' + id, { method: 'DELETE' }); toast('Transaction deleted'); refreshBadge(); done && done(); } catch (e) { fail(e); } } };
   const exclude = document.createElement('button'); exclude.className='btn sm danger'; exclude.textContent='Delete and exclude future matches';
   $('#tdel',m.el).after(exclude);
   exclude.onclick=async()=>{if(!await confirmBox({title:'Delete and permanently exclude matching imports?',body:'Matches require the same account, merchant, description, direction and amount. Repeated genuine payments could also match. Remove the rule later in Linked money.',ok:'Confirm exclusion',danger:true}))return;
@@ -152,6 +153,7 @@ async function openTxn(id, done) {
 /* ---------- history ---------- */
 routes.transactions = async (main, [pre]) => {
   const f = { q: '', category: '', account: '', status: '', type: '', from: '', to: '', min: '', max: '', sort: 'date_desc', page: 1, dup: '' };
+  if (!pre) { try { Object.assign(f, JSON.parse(sessionStorage.getItem('spendflow-history') || '{}')); } catch {} }
   if (pre === 'duplicates') f.dup = 'suspected';
   else if (pre === 'uncategorized') f.category = 'uncategorized';
   else if (pre && pre.startsWith('cat-')) { const [, c, mo] = pre.split('-').concat([]); f.category = c === 'uncategorized' ? 'uncategorized' : c; if (mo) { const y = pre.split('-')[2], mm = pre.split('-')[3]; f.from = `${y}-${mm}-01`; f.to = `${y}-${mm}-31`; } }
@@ -175,6 +177,7 @@ routes.transactions = async (main, [pre]) => {
   $('#frec').onchange = (e) => { f.recurring = e.target.checked ? 1 : ''; f.page = 1; load(); };
 
   async function load() {
+    sessionStorage.setItem('spendflow-history', JSON.stringify(f));
     const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v !== '' && v != null)).toString();
     $('#list').innerHTML = '<div class="card"><div class="skel" style="height:260px"></div></div>';
     try { data = await api('/transactions?' + qs); } catch (e) { $('#list').innerHTML = `<div class="err-box">${esc(e.message)}</div>`; return; }
@@ -200,9 +203,9 @@ routes.transactions = async (main, [pre]) => {
   const bulkDup = async (action) => { try { await api('/duplicates/resolve-all', { method: 'POST', body: { action } }); toast('Done'); refreshBadge(); load(); } catch (e) { fail(e); } };
   function selbar() {
     $('#selbar').innerHTML = selected.size ? `<div class="sel-bar"><b>${selected.size} selected</b><select id="bcat" style="width:auto;background:transparent;color:inherit;border-color:rgba(255,255,255,.3)" aria-label="Set category"><option value="">Set category…</option>${S.cats.map((c) => `<option style="color:#000" value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
-      <button class="btn sm" data-b="pending">Send to review</button><button class="btn sm" data-b="delete">Delete</button><button class="btn sm" data-b="clear">Clear</button></div>` : '';
+      <button class="btn sm" data-b="pending">Send to review</button><button class="btn sm" data-b="delete">Remove</button><button class="btn sm" data-b="clear">Clear</button></div>` : '';
     const bc = $('#bcat'); bc && (bc.onchange = () => bulk('categorize', { category_id: +bc.value }));
-    $$('[data-b]').forEach((b) => (b.onclick = async () => { const a = b.dataset.b; if (a === 'clear') { selected.clear(); draw(); } else if (a === 'delete') { if (await confirmBox({ title: `Delete ${selected.size} transactions?`, body: 'This removes them from your history and totals and can’t be undone.', ok: 'Delete', danger: true })) bulk('delete'); } else bulk(a); }));
+    $$('[data-b]').forEach((b) => (b.onclick = async () => { const a = b.dataset.b; if (a === 'clear') { selected.clear(); draw(); } else if (a === 'delete') { if (await confirmBox({ title: `Delete ${selected.size} transactions?`, body: 'Only the selected transactions will be hidden. Their records remain recoverable.', ok: 'Delete', danger: true })) bulk('delete'); } else bulk(a); }));
   }
   async function bulk(action, extra = {}) {
     try { const r = await api('/transactions/bulk', { method: 'POST', body: { ids: [...selected], action, ...extra } }); selected.clear(); refreshBadge(); toast(`${r.changed} updated`, r.undo.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); refreshBadge(); load(); } } : {}); load(); } catch (e) { fail(e); }
@@ -280,7 +283,7 @@ routes.settings = async (main) => {
   $('#imp').onclick = () => openImport();
   $('#out').onclick = async () => { await api('/auth/logout', { method: 'POST' }); S.user = null; renderAuth(); };
   const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
-  $$('#theme button').forEach((b) => { b.classList.toggle('on', b.dataset.t === cur); b.onclick = () => { document.documentElement.dataset.theme = b.dataset.t; try { localStorage.setItem('tally-theme', b.dataset.t); } catch { /* */ } $$('#theme button').forEach((x) => x.classList.toggle('on', x === b)); }; });
+  $$('#theme button').forEach((b) => { b.classList.toggle('on', b.dataset.t === cur); b.onclick = () => { document.documentElement.dataset.theme = b.dataset.t; try { localStorage.setItem('spendflow-theme', b.dataset.t); } catch { /* */ } $$('#theme button').forEach((x) => x.classList.toggle('on', x === b)); }; });
   $('#addc').onclick = () => { const m = modal(`<h2>New category</h2><div id="nerr"></div><div class="field"><label for="cn">Name</label><input id="cn" maxlength="40"></div><div class="field"><label for="ck">Type</label><select id="ck"><option value="expense">Spending</option><option value="income">Income</option><option value="savings">Savings</option></select></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="cgo">Create</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#cgo', m.el).onclick = async () => { try { await api('/categories', { method: 'POST', body: { name: $('#cn', m.el).value, kind: $('#ck', m.el).value, color: '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0') } }); m.close(); route(); } catch (e) { $('#nerr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } }; };
   $('#wipe').onclick = async () => { if (await confirmBox({ title: 'Delete all statements and transactions?', body: 'This removes every uploaded file and every transaction. Your account, categories, budgets and goals stay. This can’t be undone.', ok: 'Delete everything', danger: true, typed: 'DELETE' })) { try { await api('/data/wipe', { method: 'POST', body: { confirm: 'DELETE' } }); toast('All statements and transactions deleted'); refreshBadge(); route(); } catch (e) { fail(e); } } };
   $('#delacc').onclick = () => { const m = modal(`<h2>Delete your account?</h2><p class="muted">This permanently deletes your account, all transactions, uploaded files, budgets and goals. Enter your password to confirm.</p><div id="derr"></div><div class="field" style="margin-top:14px"><label for="dpw">Password</label><input id="dpw" type="password" autocomplete="current-password"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="dgo" style="background:var(--bad)">Delete account</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#dgo', m.el).onclick = async () => { try { await api('/auth/delete-account', { method: 'POST', body: { password: $('#dpw', m.el).value } }); m.close(); S.user = null; renderAuth(); } catch (e) { $('#derr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } }; };
