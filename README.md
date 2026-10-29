@@ -32,6 +32,18 @@ Optional: `SPENDFLOW_CURRENCY=INR|USD|...`, `SPENDFLOW_COOKIE_SECURE=1` when ser
 - **Privacy**: per-user data, httpOnly session cookie, CSRF header, content-sniffed uploads. You can delete a
   statement (with or without its transactions), wipe all data, or delete the account.
 
+## Password recovery
+
+Signed-in users can use **Settings > Account security > Change password**.
+
+If you forget the password, select **Forgot password?** on the sign-in page. Since this self-hosted app has no configured email delivery, the server operator must generate a recovery code **on the machine hosting the database**:
+
+```bash
+python -m backend.reset_password_code
+```
+
+Enter the registered email. The command prints a one-time code valid for **15 minutes**. Enter that code and a new password (at least 12 characters) in SpendFlow's reset screen. Codes are never available through a public unauthenticated endpoint. A successful change revokes all existing login sessions without changing transactions or accounts. Anyone with access to the server and database can create recovery codes; protect that access and never post a code publicly.
+
 ## Tests
 
 ```bash
