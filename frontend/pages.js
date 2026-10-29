@@ -115,6 +115,10 @@ async function openTxn(id, done) {
     <div class="desc small muted" style="margin:14px 0;padding:10px 12px;background:var(--surface2);border-radius:12px;word-break:break-word">${esc(t.description || '(no description)')}</div>
     ${t.flags.map((f) => `<div class="flag" style="margin:0 0 8px">⚠ ${esc(f)}</div>`).join('')}
     <div id="terr"></div>
+    <div class="transaction-editor-toolbar" role="group" aria-label="Transaction actions">
+      <div class="txn-editor-buttons"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button><button class="btn sm" id="tperson">Track with person</button></div>
+      <div class="txn-editor-confirm"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save changes</button></div>
+    </div>
     ${t.is_split ? `<div class="field"><label>Split across</label>${t.splits.map((s) => `<div class="row small">${catDot(s)}<span class="grow">${esc(s.category_name)}</span><b>${money(s.amount_minor)}</b></div>`).join('')}<p class="small muted" style="margin-top:6px">To change a split, send it back to review.</p></div>` : ''}
     <div class="field"><label>Category</label><div class="row" id="tcats" style="gap:8px">${S.cats.map((c) => `<button class="pill" data-c="${c.id}" style="cursor:pointer;border:1.5px solid ${c.id === catId ? esc(c.color) : 'transparent'}">${catDot(c)}${esc(c.name)}</button>`).join('')}</div></div>
     <div class="grid g2"><div class="field"><label>Type</label><select id="tt">${['expense', 'income', 'transfer'].map((k) => `<option value="${k}" ${k === type ? 'selected' : ''}>${typeLabel[k]}</option>`).join('')}</select></div>
@@ -126,23 +130,22 @@ async function openTxn(id, done) {
       <div class="field"><label for="tm">Merchant</label><input id="tm" value="${esc(t.merchant)}" maxlength="80"></div><div class="field"><label for="td">Date</label><input id="td" type="date" value="${esc(t.date)}"></div>
       <div class="field"><label for="ta">Amount</label><input id="ta" inputmode="decimal" value="${(t.amount_minor / 100).toFixed(2)}" ${t.is_split ? 'disabled' : ''}></div>
       <div class="field"><label for="tdir">Direction</label><select id="tdir"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></div></div></details>
-    <label class="check small"><input type="checkbox" id="tremember"> Remember category and type for future imports</label>
-    <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button><button class="btn sm" id="tperson">Track with person</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
+    `);
   $('#txn-create-tag',m.el).onclick=()=>{
     const dialog=modal('<h2>New tag</h2><div class="field"><label>Name</label><input id="tag-new-name" maxlength="80"></div><div class="field"><label>Type</label><select id="tag-new-kind"><option value="trip">Trip</option><option value="person">Person / beneficiary</option><option value="custom">Other</option></select></div><div id="tag-new-err"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tag-new-save">Create</button></div>');
     $('[data-x]',dialog.el).onclick=()=>dialog.close();
     $('#tag-new-save',dialog.el).onclick=async()=>{
       try{
         const tag=await api('/tags',{method:'POST',body:{name:$('#tag-new-name',dialog.el).value,kind:$('#tag-new-kind',dialog.el).value}});
-        if(!$('[data-assign-tag="'+tag.id+'"]',m.el).length)$('#txn-create-tag',m.el).insertAdjacentHTML('beforebegin','<label class="check small"><input type="checkbox" checked data-assign-tag="'+tag.id+'" style="width:16px;height:16px"> '+esc(tag.name)+'</label>');
+        if(!$('[data-assign-tag="'+tag.id+'"]',m.el))$('#txn-create-tag',m.el).insertAdjacentHTML('beforebegin','<label class="check small"><input type="checkbox" checked data-assign-tag="'+tag.id+'" style="width:16px;height:16px"> '+esc(tag.name)+'</label>');
         else $('[data-assign-tag="'+tag.id+'"]',m.el).checked=true;
         dialog.close();
       }catch(e){$('#tag-new-err',dialog.el).textContent=e.message;}
     };
   };
-  $('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
+  $$('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
   $('[data-x]', m.el).onclick = () => m.close();
-  const patch = async (body, msg, saveTags = false) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); if(saveTags) await api('/transactions/' + id + '/tags',{method:'PUT',body:{tag_ids:$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}}); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
+  const patch = async (body, msg, saveTags = false) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); if(saveTags) await api('/transactions/' + id + '/tags',{method:'PUT',body:{tag_ids:$$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}}); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
   $('#tperson',m.el).onclick=()=>{m.close();personLinkDialog(id,done);};
   $('#tflow', m.el).onclick = async () => {
@@ -228,7 +231,7 @@ routes.transactions = async (main, [pre]) => {
         <label class="check"><input type="checkbox" id="frec"> Recurring only</label>
         <div><label for="ffrom">From</label><input type="date" id="ffrom" value="${esc(f.from.replace(/-31$/, '-01'))}"></div><div><label for="fto">To</label><input type="date" id="fto"></div>
         <div class="row" style="flex-wrap:nowrap"><input id="fmin" inputmode="decimal" placeholder="Min ₹" aria-label="Minimum amount"><input id="fmax" inputmode="decimal" placeholder="Max ₹" aria-label="Maximum amount"></div></div></details></div>
-    <div id="list"></div><div id="selbar"></div>`;
+    <div id="selbar" aria-live="polite"></div><div id="list"></div>`;
   $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
   $('#imp').onclick = () => openImport();
   $('#add-manual').onclick = () => manualTransaction(todayIso(), load);
@@ -263,8 +266,9 @@ routes.transactions = async (main, [pre]) => {
   }
   const bulkDup = async (action) => { try { await api('/duplicates/resolve-all', { method: 'POST', body: { action } }); toast('Done'); refreshBadge(); load(); } catch (e) { fail(e); } };
   function selbar() {
-    $('#selbar').innerHTML = selected.size ? `<div class="sel-bar"><b>${selected.size} selected</b><select id="bcat" style="width:auto;background:transparent;color:inherit;border-color:rgba(255,255,255,.3)" aria-label="Set category"><option value="">Set category…</option>${S.cats.map((c) => `<option style="color:#000" value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
-      <button class="btn sm" data-b="pending">Send to review</button><button class="btn sm" data-b="delete">Remove</button><button class="btn sm" data-b="clear">Clear</button></div>` : '';
+    $('#selbar').innerHTML = selected.size ? `<div class="sel-bar" role="toolbar" aria-label="Selected transaction actions"><b>${selected.size} selected</b>
+      <div class="sel-bar-actions"><select id="bcat" aria-label="Set category"><option value="">Set category…</option>${S.cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+      <button class="btn sm" data-b="pending">Send to review</button><button class="btn sm" data-b="delete">Remove</button><button class="btn sm" data-b="clear">Clear</button></div></div>` : '';
     const bc = $('#bcat'); bc && (bc.onchange = () => bulk('categorize', { category_id: +bc.value }));
     $$('[data-b]').forEach((b) => (b.onclick = async () => { const a = b.dataset.b; if (a === 'clear') { selected.clear(); draw(); } else if (a === 'delete') { if (await confirmBox({ title: `Delete ${selected.size} transactions?`, body: 'Only the selected transactions will be hidden. Their records remain recoverable.', ok: 'Delete', danger: true })) bulk('delete'); } else bulk(a); }));
   }
