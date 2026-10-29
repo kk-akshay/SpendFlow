@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 _tmp = tempfile.TemporaryDirectory()
 os.environ.pop("DATABASE_URL", None)
