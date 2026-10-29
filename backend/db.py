@@ -108,6 +108,47 @@ CREATE TABLE IF NOT EXISTS merchant_rules(
   PRIMARY KEY(user_id, merchant_key)
 );
 
+
+CREATE TABLE IF NOT EXISTS import_exclusions(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  merchant_key TEXT NOT NULL,
+  description_key TEXT NOT NULL,
+  amount_minor INTEGER NOT NULL,
+  direction TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, account_id, merchant_key, description_key, amount_minor, direction)
+);
+CREATE TABLE IF NOT EXISTS classification_rules(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  merchant_key TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK(type IN ('income','expense','transfer')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, account_id, merchant_key, direction)
+);
+CREATE TABLE IF NOT EXISTS transaction_groups(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('loan','repayment','pass_through','transfer')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS transaction_group_members(
+  group_id INTEGER NOT NULL REFERENCES transaction_groups(id) ON DELETE CASCADE,
+  txn_id INTEGER NOT NULL UNIQUE REFERENCES transactions(id) ON DELETE CASCADE,
+  original_type TEXT NOT NULL,
+  original_category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  original_status TEXT NOT NULL,
+  original_reviewed_at TEXT,
+  PRIMARY KEY(group_id, txn_id)
+);
+CREATE INDEX IF NOT EXISTS idx_groups_user ON transaction_groups(user_id);
+
 CREATE TABLE IF NOT EXISTS budgets(
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
