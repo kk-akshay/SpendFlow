@@ -187,6 +187,36 @@ CREATE TABLE IF NOT EXISTS flow_group_members(
 );
 CREATE INDEX IF NOT EXISTS idx_flow_group_members_group ON flow_group_members(group_id);
 
+-- Separate people/contact ledgers from real bank accounts.
+CREATE TABLE IF NOT EXISTS people(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL CHECK(length(trim(name))>0),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_people_user ON people(user_id);
+CREATE TABLE IF NOT EXISTS people_upi(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+  upi_id TEXT NOT NULL,
+  UNIQUE(user_id,upi_id)
+);
+CREATE INDEX IF NOT EXISTS idx_people_upi_person ON people_upi(person_id);
+CREATE TABLE IF NOT EXISTS people_transactions(
+  txn_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK(role IN ('lent','repaid','borrowed','paid_back','other')),
+  original_type TEXT NOT NULL,
+  original_category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  original_status TEXT NOT NULL,
+  original_reviewed_at TEXT,
+  original_skipped_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_people_transactions_person ON people_transactions(person_id);
+
 CREATE TABLE IF NOT EXISTS budgets(
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
