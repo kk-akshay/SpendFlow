@@ -26,7 +26,7 @@ SELECT t.id, t.date, substr(t.date,1,7) AS month, t.direction, t.type, t.account
 FROM transactions t
 LEFT JOIN splits s ON s.txn_id = t.id
 LEFT JOIN categories c ON c.id = COALESCE(s.category_id, t.category_id)
-WHERE t.user_id = ? AND t.status IN ('pending','categorized','skipped') AND {DUP_OK}
+WHERE t.user_id = ? AND t.status IN ('pending','categorized','skipped') AND t.removed_at IS NULL AND {DUP_OK}
 """
 
 EXP = "CASE WHEN direction='debit' THEN amount_minor ELSE -amount_minor END"
