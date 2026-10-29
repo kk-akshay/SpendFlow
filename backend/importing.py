@@ -78,7 +78,7 @@ def mark_duplicates(db, user_id: int, statement_id: int) -> dict:
         lo, hi = (d - timedelta(days=1)).isoformat(), (d + timedelta(days=1)).isoformat()
         cands = db.execute(
             f"SELECT * FROM transactions WHERE user_id=? AND amount_minor=? AND direction=? AND date BETWEEN ? AND ? "
-            f"AND status IN {STAGED_OR_LIVE} AND (statement_id IS NULL OR statement_id!=?) "
+            f"AND status IN {STAGED_OR_LIVE} AND removed_at IS NULL AND (statement_id IS NULL OR statement_id!=?) "
             f"AND (dup_status IS NULL OR dup_status='cleared') ORDER BY id LIMIT 25",
             (user_id, row["amount_minor"], row["direction"], lo, hi, statement_id)).fetchall()
         best, best_id = None, None
@@ -101,7 +101,7 @@ def _candidates(db, user_id: int, r) -> list:
         "SELECT t.*, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
         "WHERE t.user_id=? AND t.id!=? AND t.account_id!=? AND t.amount_minor=? AND t.direction!=? "
         "AND t.date BETWEEN ? AND ? AND t.status IN ('pending','categorized','skipped') "
-        "AND (t.dup_status IS NULL OR t.dup_status='cleared') AND t.transfer_pair_id IS NULL AND t.removed_at IS NULL "
+        "AND (t.dup_status IS NULL OR t.dup_status='cleared') AND t.transfer_pair_id IS NULL AND t.removed_at IS NULL AND t.removed_at IS NULL "
         "AND (t.status!='categorized' OR t.type='transfer')",
         (user_id, r["id"], r["account_id"], r["amount_minor"], r["direction"],
          (d - timedelta(days=3)).isoformat(), (d + timedelta(days=3)).isoformat())).fetchall()
