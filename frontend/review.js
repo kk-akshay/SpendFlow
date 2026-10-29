@@ -171,8 +171,8 @@ routes.review = async (main) => {
     $('#accept') && ($('#accept').onclick = accept);
     $('#review-order').onchange = (e) => { order = e.target.value; localStorage.setItem('spendflow-review-order', order); load(); };
     $('#remember').onchange = (e) => { opts.remember = e.target.checked; };
-    $('[data-tag-id]', main).forEach(el => { el.onchange = () => {
-      selectedTagIds = $('[data-tag-id]:checked', main).map(x => +x.dataset.tagId);
+    $$('[data-tag-id]', main).forEach(el => { el.onchange = () => {
+      selectedTagIds = $$('[data-tag-id]:checked', main).map(x => +x.dataset.tagId);
     }; });
     $('#create-review-tag').onclick = () => {
       const m = modal('<h2>New transaction tag</h2><div id="tag-error"></div><div class="field"><label>Name</label><input id="new-tag-name" maxlength="80" placeholder="e.g. Goa trip"></div><div class="field"><label>Type</label><select id="new-tag-kind"><option value="trip">Trip</option><option value="person">Person / beneficiary</option><option value="custom">Other</option></select></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="save-new-tag">Add tag</button></div>');
