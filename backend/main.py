@@ -649,6 +649,10 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         undo = txns.bulk(db, uid, [txn_id], "pending", {})["undo"]
         return {"txn": txns.get_txn(db, uid, txn_id), "undo": undo}
 
+    if db.execute("SELECT 1 FROM transaction_group_members WHERE txn_id=?", (txn_id,)).fetchone() and (
+        "category_id" in body or body.get("splits") or "type" in body or
+        "direction" in body or "amount_minor" in body):
+        raise HTTPException(400, "Unlink this transaction from its group before changing its accounting details.")
     # field corrections
     vals = {}
     if "merchant" in body and body["merchant"] is not None:
