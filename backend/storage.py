@@ -23,7 +23,8 @@ def _client():
         aws_access_key_id=os.environ["SPENDFLOW_S3_ACCESS_KEY"],
         aws_secret_access_key=os.environ["SPENDFLOW_S3_SECRET_KEY"],
         region_name=os.getenv("SPENDFLOW_S3_REGION", "auto"),
-        config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}),
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"},
+                      retries={"max_attempts": 3, "mode": "standard"}),
     )
 
 
