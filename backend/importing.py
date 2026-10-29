@@ -101,7 +101,7 @@ def _candidates(db, user_id: int, r) -> list:
         "SELECT t.*, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
         "WHERE t.user_id=? AND t.id!=? AND t.account_id!=? AND t.amount_minor=? AND t.direction!=? "
         "AND t.date BETWEEN ? AND ? AND t.status IN ('pending','categorized','skipped') "
-        "AND (t.dup_status IS NULL OR t.dup_status='cleared') AND t.transfer_pair_id IS NULL AND t.removed_at IS NULL AND t.removed_at IS NULL "
+        "AND (t.dup_status IS NULL OR t.dup_status='cleared') AND t.transfer_pair_id IS NULL AND t.removed_at IS NULL "
         "AND (t.status!='categorized' OR t.type='transfer')",
         (user_id, r["id"], r["account_id"], r["amount_minor"], r["direction"],
          (d - timedelta(days=3)).isoformat(), (d + timedelta(days=3)).isoformat())).fetchall()
@@ -154,9 +154,6 @@ def commit_statement(db, user_id: int, statement_id: int) -> dict:
     if not st:
         raise LookupError("Statement not found, or it was already confirmed.")
     mark_duplicates(db, user_id, statement_id)  # re-check against anything confirmed since upload
-    excluded_ids = [r["id"] for r in db.execute("SELECT * FROM transactions WHERE statement_id=? AND status='staged'", (statement_id,)) if ledger.matching_exclusion(db, r)]
-    for excluded_id in excluded_ids:
-        db.execute("DELETE FROM transactions WHERE id=?", (excluded_id,))
     dropped = db.execute("DELETE FROM transactions WHERE statement_id=? AND status='staged' AND dup_status='exact'", (statement_id,)).rowcount
     # a suspected duplicate whose original has since disappeared is no longer a duplicate
     db.execute(
@@ -168,8 +165,8 @@ def commit_statement(db, user_id: int, statement_id: int) -> dict:
     for tid in ids:
         t = db.execute("SELECT * FROM transactions WHERE id=?", (tid,)).fetchone()
         rule = db.execute("SELECT id FROM exclusion_rules WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=? AND amount_minor=?", (user_id,t["account_id"],t["merchant_key"],t["direction"],t["amount_minor"])).fetchone()
-        if rule:
-            db.execute("UPDATE transactions SET removed_at=?,excluded_rule_id=? WHERE id=?", (now(),rule["id"],tid))
+        if rule or ledger.matching_exclusion(db,t):
+            db.execute("UPDATE transactions SET removed_at=?,excluded_rule_id=? WHERE id=?", (now(),rule["id"] if rule else None,tid))
             excluded += 1
             continue
         learned = db.execute("SELECT category_id,type FROM classification_rules WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=?", (user_id,t["account_id"],t["merchant_key"],t["direction"])).fetchone()
@@ -177,12 +174,11 @@ def commit_statement(db, user_id: int, statement_id: int) -> dict:
             db.execute("UPDATE transactions SET category_id=?,type=?,status='categorized',reviewed_at=? WHERE id=?", (learned["category_id"],learned["type"],now(),tid))
             auto_classified += 1
     transfers = detect_transfers(db, user_id, ids)
-    classified = ledger.classify_import(db, user_id, ids)
     suspected = db.execute("SELECT COUNT(*) FROM transactions WHERE statement_id=? AND dup_status='suspected'", (statement_id,)).fetchone()[0]
     db.execute("UPDATE statements SET status='imported' WHERE id=?", (statement_id,))
     refresh_statement_meta(db, statement_id)
     db.commit()
-    return {"imported": len(ids), "already_imported": dropped, "excluded":len(excluded_ids), "auto_classified": classified, "suspected_duplicates": suspected, "transfers_detected": transfers, "excluded": excluded, "auto_classified": auto_classified}
+    return {"imported": len(ids) - excluded, "already_imported": dropped, "suspected_duplicates": suspected, "transfers_detected": transfers, "excluded": excluded, "auto_classified": auto_classified}
 
 
 def duplicate_pairs(db, user_id: int) -> list[dict]:
