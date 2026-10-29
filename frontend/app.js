@@ -369,7 +369,17 @@ routes.import = async (main, [ids]) => {
     $('#imp-ok').onclick = async () => {
       const b = $('#imp-ok'); b.disabled = true; b.textContent = 'Importing…';
       try {
-        const r = await api(`/imports/${id}/commit`, { method: 'POST' });
+        const queued = await api(`/imports/${id}/commit-job`, { method: 'POST' });
+        let status;
+        const deadline = Date.now() + 20 * 60 * 1000;
+        do {
+          if (Date.now() > deadline) throw new Error('Confirmation is taking longer than expected. Check Statements before retrying.');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          status = await api('/imports/jobs/' + encodeURIComponent(queued.job_id));
+          if (status.status === 'failed') throw new Error(status.detail || 'Confirmation failed.');
+          b.textContent = 'Saving transactions…';
+        } while (status.status !== 'done');
+        const r = status.commit_result;
         const bits = [`${r.imported} imported`]; if (r.already_imported) bits.push(`${r.already_imported} already there`); if (r.excluded) bits.push(`${r.excluded} excluded by your rules`); if (r.auto_classified) bits.push(`${r.auto_classified} auto-classified`); if (r.transfers_detected) bits.push(`${r.transfers_detected} looked like transfers between your accounts`);
         toast(bits.join(' · ')); await refreshBadge(); next(false);
       } catch (er) { fail(er); b.disabled = false; b.textContent = 'Try again'; }
