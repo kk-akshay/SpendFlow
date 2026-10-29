@@ -5,14 +5,13 @@ const KEYS = '1234567890qwertyuiopasdfghjklzxcvbnm'.split('');
 routes.review = async (main) => {
   let scope = 'pending';
   let order = localStorage.getItem('spendflow-review-order') === 'asc' ? 'asc' : 'desc';
-  let order = localStorage.getItem('tally-review-order') === 'asc' ? 'asc' : 'desc';
   let state = null;          // {item, progress}
-  let opts = { note: '', recurring: false, similar: false, remember: false, showNote: false, remember: false };
+  let opts = { note: '', recurring: false, similar: false, remember: false, showNote: false };
   let lastUndo = null;
   let busy = false;
   let typeOverride = null;
 
-  const load = async () => { state = await api('/review/next?scope=' + scope + '&order=' + order + '&order=' + order); draw(); refreshBadge(); };
+  const load = async () => { state = await api('/review/next?scope=' + scope + '&order=' + order); draw(); refreshBadge(); };
 
   const shortcut = (i) => KEYS[i] || '';
   const orderedCats = () => S.cats.filter((c) => c.kind !== 'transfer' || true);
@@ -33,7 +32,6 @@ routes.review = async (main) => {
     const sgCat = sg && cat(sg.category_id);
     const inflow = t.direction === 'credit';
     main.innerHTML = `<div class="review"><div class="row" style="justify-content:flex-end;margin-bottom:12px"><label class="small">Review order <select id="review-order" style="width:auto"><option value="desc" ${order === 'desc' ? 'selected' : ''}>Newest first</option><option value="asc" ${order === 'asc' ? 'selected' : ''}>Oldest first</option></select></label></div>${progressHtml(p)}
-      <div class="row" style="justify-content:flex-end"><label class="small muted">Order <select id="review-order" style="width:auto"><option value="desc" ${order === 'desc' ? 'selected' : ''}>Newest first</option><option value="asc" ${order === 'asc' ? 'selected' : ''}>Oldest first</option></select></label></div>
       <div class="stage" id="stage"><div class="swipe-hint r" id="hint-r">${sgCat ? 'ACCEPT' : ''}</div><div class="swipe-hint l" id="hint-l">SKIP</div>
         <article class="tcard enter" id="card" aria-label="Transaction to categorise">
           <div class="kind"><span class="pill ${type === 'transfer' ? '' : inflow ? 'good' : ''}">${typeLabel[type]}</span>
@@ -58,7 +56,6 @@ routes.review = async (main) => {
         <button class="btn sm ${opts.recurring ? 'primary' : ''}" id="b-rec">${opts.recurring ? 'Recurring ✓' : 'Recurring'} <kbd>.</kbd></button>
         <button class="btn sm" id="b-skip">Skip for now <kbd>␣</kbd></button>
         <button class="btn sm" id="b-undo" ${lastUndo ? '' : 'disabled'}>Undo <kbd>⌫</kbd></button></div>
-      <label class="check small" style="justify-content:center"><input type="checkbox" id="remember"> Remember this merchant for future imports</label>
       ${opts.showNote ? `<div class="field" style="margin-top:14px"><label for="note" class="sr">Note</label><input id="note" placeholder="Add a note (optional)" maxlength="500" value="${esc(opts.note)}"></div>` : ''}
       <label class="check small" style="justify-content:center"><input type="checkbox" id="remember" ${opts.remember ? 'checked' : ''}> Remember this merchant/account pattern for future imports</label>
       ${item.similar_count > 0 ? `<label class="check small" style="justify-content:center;margin-top:8px"><input type="checkbox" id="sim" ${opts.similar ? 'checked' : ''}> Also apply to ${item.similar_count} other “${esc(t.merchant)}” transaction${item.similar_count > 1 ? 's' : ''} waiting for review</label>` : ''}
@@ -90,9 +87,9 @@ routes.review = async (main) => {
     const card = $('#card');
     card && card.classList.add('out-r');
     try {
-      const body = { ...payload, note: opts.note || undefined, recurring: opts.recurring || undefined, remember: opts.remember, remember: !!opts.remember, apply_similar: opts.similar && state.item.similar_count > 0 && !!payload.category_id };
+      const body = { ...payload, note: opts.note || undefined, recurring: opts.recurring || undefined, remember: !!opts.remember, apply_similar: opts.similar && state.item.similar_count > 0 && !!payload.category_id };
       if (typeOverride) body.type = typeOverride;
-      const r = await api(`/review/${t.id}/categorize?scope=${scope}&order=${order}&order=${order}`, { method: 'POST', body });
+      const r = await api(`/review/${t.id}/categorize?scope=${scope}&order=${order}`, { method: 'POST', body });
       lastUndo = r.undo; state = { item: r.item, progress: r.progress }; resetOpts();
       if (r.applied_similar) toast(`Applied to ${r.applied_similar} similar transaction${r.applied_similar > 1 ? 's' : ''} too`, { action: 'Undo', onAction: undo });
       setTimeout(draw, 160);
