@@ -91,3 +91,40 @@ def throttle(key: str, limit: int = 8, window: int = 600) -> None:
 
 def clear_throttle(key: str) -> None:
     _attempts.pop(key, None)
+
+# Password reset tokens are generated only by a trusted local server operator.
+RESET_TOKEN_MINUTES = 15
+
+def issue_password_reset(db, email: str) -> str | None:
+    user = db.execute("SELECT id FROM users WHERE email=?", (email.strip().lower(),)).fetchone()
+    if not user:
+        return None
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_MINUTES)
+    db.execute("DELETE FROM password_reset_tokens WHERE user_id=? OR expires_at<?",
+               (user["id"], datetime.now(timezone.utc).isoformat()))
+    db.execute("INSERT INTO password_reset_tokens(token_hash,user_id,expires_at) VALUES(?,?,?)",
+               (_token_hash(token), user["id"], expires.isoformat()))
+    db.commit()
+    return token
+
+
+def update_password(db, user_id: int, password: str) -> None:
+    if len(password) < 12 or len(password) > 1024:
+        raise ValueError("Choose a password of at least 12 characters.")
+    digest, salt = hash_password(password)
+    db.execute("UPDATE users SET pw_hash=?,pw_salt=? WHERE id=?", (digest, salt, user_id))
+    db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+    db.execute("DELETE FROM password_reset_tokens WHERE user_id=?", (user_id,))
+    db.commit()
+
+
+def redeem_password_reset(db, token: str, new_password: str) -> bool:
+    if len(token) > 256 or not token:
+        return False
+    row = db.execute("SELECT user_id,expires_at FROM password_reset_tokens WHERE token_hash=?",
+                     (_token_hash(token),)).fetchone()
+    if not row or row["expires_at"] <= datetime.now(timezone.utc).isoformat():
+        return False
+    update_password(db, row["user_id"], new_password)
+    return True
