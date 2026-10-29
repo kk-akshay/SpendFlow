@@ -29,7 +29,7 @@ def main(source_dir: Path, apply: bool):
                 continue
             candidate = Path(st["stored_path"])
             if not candidate.is_file():
-                candidate = source_dir / str(st["user_id"]) / Path(st["stored_path"].replace("\\\\", "/")).name
+                candidate = source_dir / str(st["user_id"]) / Path(st["stored_path"].replace("\\", "/")).name
             if not candidate.is_file():
                 missing.append(st["id"])
                 continue
