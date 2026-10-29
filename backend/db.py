@@ -225,6 +225,22 @@ CREATE TABLE IF NOT EXISTS budgets(
   limit_minor INTEGER NOT NULL CHECK(limit_minor > 0)
 );
 
+CREATE TABLE IF NOT EXISTS tags(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('trip','person','custom')),
+  name TEXT NOT NULL CHECK(length(trim(name))>0),
+  UNIQUE(user_id,kind,name)
+);
+CREATE INDEX IF NOT EXISTS idx_tags_owner ON tags(user_id,kind);
+
+CREATE TABLE IF NOT EXISTS transaction_tags(
+  txn_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY(txn_id,tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_transaction_tags_tag ON transaction_tags(tag_id);
+
 CREATE TABLE IF NOT EXISTS goals(
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

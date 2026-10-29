@@ -631,6 +631,93 @@ def commit_import(sid: int, user=Depends(current_user), db=Depends(get_db)):
     return importing.commit_statement(db, user["id"], sid)
 
 
+
+# ================================================================ transaction tags
+
+class TagCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    kind: str = "custom"
+
+
+class TagAssignment(BaseModel):
+    tag_ids: list[int] = Field(default_factory=list, max_length=20)
+
+
+@app.get("/api/tags")
+def list_tags(user=Depends(current_user), db=Depends(get_db)):
+    uid = user["id"]
+    rows = db.execute(
+        "SELECT g.id,g.name,g.kind,COUNT(t.id) AS transaction_count,"
+        "COALESCE(SUM(CASE WHEN t.type='expense' AND t.direction='debit' "
+        "AND t.status!='staged' AND t.removed_at IS NULL "
+        "AND (t.dup_status IS NULL OR t.dup_status='cleared') THEN t.amount_minor ELSE 0 END),0) AS expense_minor "
+        "FROM tags g LEFT JOIN transaction_tags tt ON tt.tag_id=g.id "
+        "LEFT JOIN transactions t ON t.id=tt.txn_id AND t.user_id=g.user_id "
+        "WHERE g.user_id=? GROUP BY g.id,g.name,g.kind ORDER BY g.kind,g.name",
+        (uid,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/tags")
+def create_tag(body: TagCreate, user=Depends(current_user), db=Depends(get_db)):
+    name = body.name.strip()
+    if not name or body.kind not in ("trip", "person", "custom"):
+        raise HTTPException(400, "Choose a tag name and valid type.")
+    existing = db.execute("SELECT id,name,kind FROM tags WHERE user_id=? AND kind=? AND lower(name)=lower(?)",
+                          (user["id"], body.kind, name)).fetchone()
+    if existing:
+        return dict(existing)
+    cur = db.execute("INSERT INTO tags(user_id,kind,name) VALUES(?,?,?)", (user["id"], body.kind, name))
+    tag_id = cur.lastrowid
+    db.commit()
+    return {"id": tag_id, "name": name, "kind": body.kind}
+
+
+@app.get("/api/transactions/{txn_id}/tags")
+def get_transaction_tags(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    if not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=? AND status!='staged'",
+                      (txn_id, user["id"])).fetchone():
+        raise LookupError("Transaction not found.")
+    return [dict(r) for r in db.execute(
+        "SELECT g.id,g.name,g.kind FROM tags g JOIN transaction_tags tt ON tt.tag_id=g.id "
+        "WHERE tt.txn_id=? AND g.user_id=? ORDER BY g.kind,g.name",
+        (txn_id, user["id"]))]
+
+
+@app.put("/api/transactions/{txn_id}/tags")
+def set_transaction_tags(txn_id: int, body: TagAssignment, user=Depends(current_user), db=Depends(get_db)):
+    uid = user["id"]
+    if not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=? AND status!='staged'",
+                      (txn_id, uid)).fetchone():
+        raise LookupError("Transaction not found.")
+    ids = sorted(set(body.tag_ids))
+    if ids:
+        valid = db.execute(
+            "SELECT id FROM tags WHERE user_id=? AND id IN (" + ",".join("?" * len(ids)) + ")",
+            [uid, *ids]).fetchall()
+        if len(valid) != len(ids):
+            raise HTTPException(400, "One or more tags were not found.")
+    db.execute("DELETE FROM transaction_tags WHERE txn_id=?", (txn_id,))
+    for tag_id in ids:
+        db.execute("INSERT INTO transaction_tags(txn_id,tag_id) VALUES(?,?)", (txn_id, tag_id))
+    db.commit()
+    return {"tag_ids": ids}
+
+
+@app.get("/api/tags/{tag_id}/transactions")
+def tag_transactions(tag_id: int, user=Depends(current_user), db=Depends(get_db)):
+    tag = db.execute("SELECT id,name,kind FROM tags WHERE id=? AND user_id=?", (tag_id,user["id"])).fetchone()
+    if not tag:
+        raise LookupError("Tag not found.")
+    rows = db.execute(
+        "SELECT t.id,t.date,t.amount_minor,t.direction,t.type,t.merchant,t.description,a.name AS account_name "
+        "FROM transaction_tags tt JOIN transactions t ON t.id=tt.txn_id "
+        "JOIN accounts a ON a.id=t.account_id "
+        "WHERE tt.tag_id=? AND t.user_id=? AND t.status!='staged' AND t.removed_at IS NULL "
+        "ORDER BY t.date DESC,t.id DESC LIMIT 1000", (tag_id,user["id"])).fetchall()
+    return {"tag": dict(tag), "transactions": [dict(r) for r in rows]}
+
+
 @app.get("/api/statements")
 def list_statements(user=Depends(current_user), db=Depends(get_db)):
     rows = db.execute(
