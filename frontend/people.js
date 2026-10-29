@@ -49,7 +49,7 @@ routes.people=async main=>{
     $('#add-person').onclick=()=>personNameDialog('',draw);
     $$('[data-rename]',main).forEach(b=>b.onclick=()=>{const p=people.find(x=>x.id===+b.dataset.rename);const m=modal('<h2>Rename person</h2><input id="rename-person" maxlength="80" value="'+esc(p.name)+'"><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="rename-save">Save</button></div>');$('[data-x]',m.el).onclick=()=>m.close();$('#rename-save',m.el).onclick=async()=>{try{await api('/people/'+p.id,{method:'PATCH',body:{name:$('#rename-person',m.el).value}});m.close();draw();}catch(e){fail(e);}};});
     $$('[data-alias-add]',main).forEach(b=>b.onclick=()=>{const m=modal('<h2>Link UPI ID</h2><p class="muted small">You can link several UPI IDs to one person.</p><input id="upi-input" placeholder="name@bank"><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="upi-save">Link UPI ID</button></div>');$('[data-x]',m.el).onclick=()=>m.close();$('#upi-save',m.el).onclick=async()=>{try{await api('/people/'+b.dataset.aliasAdd+'/upi',{method:'POST',body:{upi_id:$('#upi-input',m.el).value}});m.close();draw();}catch(e){fail(e);}};});
-    $('[data-person-find]',main).forEach(b=>b.onclick=async()=>{
+    $$('[data-person-find]',main).forEach(b=>b.onclick=async()=>{
       try{
         const candidates=await api('/people/'+b.dataset.personFind+'/candidates');
         const m=modal('<h2>Related payments</h2><p class="muted small">UPI IDs and similar names are suggestions only. Confirm loan purpose for every payment.</p><div id="candidate-error"></div><div class="list" style="max-height:50vh;overflow:auto">'+
@@ -57,14 +57,14 @@ routes.people=async main=>{
         '</div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="save-candidates">Link selected</button></div>');
         $('[data-x]',m.el).onclick=()=>m.close();
         $('#save-candidates',m.el).onclick=async()=>{
-          const selected=$('[data-candidate-role]',m.el).filter(e=>e.value);
+          const selected=$$('[data-candidate-role]',m.el).filter(e=>e.value);
           if(!selected.length){$('#candidate-error',m.el).textContent='Select at least one payment purpose.';return;}
           if(!await confirmBox({title:'Confirm selected payments?',body:'These will be assigned to this person. Loan payments will be excluded from personal totals without changing source transactions.',ok:'Link payments'}))return;
           try {for(const el of selected) await api('/people/'+b.dataset.personFind+'/transactions',{method:'POST',body:{txn_id:+el.dataset.candidateRole,role:el.value}});m.close();draw();}catch(e){$('#candidate-error',m.el).textContent=e.message;}
         };
       }catch(e){fail(e);}
     });
-    $('[data-alias-del]',main).forEach(b=>b.onclick=async()=>{let [pid,id]=b.dataset.aliasDel.split(':');if(await confirmBox({title:'Unlink UPI ID?',body:'Existing transaction links remain. Future suggestions will no longer use this ID.',ok:'Unlink'})){await api('/people/'+pid+'/upi/'+id,{method:'DELETE'});draw();}});
+    $$('[data-alias-del]',main).forEach(b=>b.onclick=async()=>{let [pid,id]=b.dataset.aliasDel.split(':');if(await confirmBox({title:'Unlink UPI ID?',body:'Existing transaction links remain. Future suggestions will no longer use this ID.',ok:'Unlink'})){await api('/people/'+pid+'/upi/'+id,{method:'DELETE'});draw();}});
     $$('[data-person-unlink]',main).forEach(b=>b.onclick=async()=>{let [pid,tid]=b.dataset.personUnlink.split(':');if(await confirmBox({title:'Unlink this transaction?',body:'Restore its previous accounting classification?',ok:'Unlink'})){await api('/people/'+pid+'/transactions/'+tid,{method:'DELETE'});draw();}});
     $$('[data-person-del]',main).forEach(b=>b.onclick=async()=>{if(await confirmBox({title:'Remove person?',body:'All links to this person will be removed and original transaction categories restored; bank transactions will stay.',ok:'Remove person',danger:true})){await api('/people/'+b.dataset.personDel,{method:'DELETE'});draw();}});
   }

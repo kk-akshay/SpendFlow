@@ -123,7 +123,7 @@ async function openTxn(id, done) {
         <div class="foot"><button class="btn" id="flow-cancel">Cancel</button><button class="btn primary" id="flow-link">Link selected</button></div>`);
       $('#flow-cancel',x.el).onclick=()=>x.close();
       $('#flow-link',x.el).onclick=async()=>{
-        const ids=[id,...$('[data-flow-txn]:checked',x.el).map(el=>+el.dataset.flowTxn)];
+        const ids=[id,...$$('[data-flow-txn]:checked',x.el).map(el=>+el.dataset.flowTxn)];
         if(ids.length<2)return toast('Select at least one related transaction',{err:true});
         if(!await confirmBox({title:'Confirm non-personal flow?',body:'The selected transactions will no longer count as personal income or expenses. All original payments remain visible and can be unlinked.',ok:'Link transactions'}))return;
         try { await api('/flows',{method:'POST',body:{kind:$('#flow-kind',x.el).value,transaction_ids:ids}});x.close();toast('Transactions linked');done&&done();} catch(e){fail(e);}
@@ -157,7 +157,7 @@ async function openTxn(id, done) {
       $('[data-x]',prompt.el).onclick=()=>prompt.close();
       $('#match-confirm',prompt.el).onclick=async()=>{
         try{
-          const ids=[id,...$('[data-match]:checked',prompt.el).map(x=>+x.dataset.match)];
+          const ids=[id,...$$('[data-match]:checked',prompt.el).map(x=>+x.dataset.match)];
           if(ids.length<2)throw Error('Choose at least one matching payment.');
           await api('/groups',{method:'POST',body:{name:$('#match-name',prompt.el).value,kind:$('#match-kind',prompt.el).value,ids}});
           prompt.close();m.close();toast('Payments linked');refreshBadge();done&&done();
