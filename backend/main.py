@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analytics, importing, ledger, parse_llm, txns, people
+from . import analytics, importing, ledger, parse_llm, txns, people, storage
 from .auth import (EMAIL_RE, clear_throttle, current_user, end_session, hash_password, require_csrf,
                    start_session, throttle, verify_password, redeem_password_reset, update_password, issue_password_reset, mail_recovery_available, send_password_reset_email)
 from .config import (CURRENCY, FRONTEND_DIR, LOCALE, MAX_FILES_PER_IMPORT, MAX_UPLOAD_BYTES, UPLOAD_DIR)
@@ -178,7 +178,7 @@ class DeleteAccount(BaseModel):
 
 
 def _delete_files(user_id: int) -> None:
-    shutil.rmtree(UPLOAD_DIR / str(user_id), ignore_errors=True)
+    storage.delete_user_files(user_id)
 
 
 @app.post("/api/auth/delete-account")
@@ -334,7 +334,7 @@ def delete_account_row(account_id: int, user=Depends(current_user), db=Depends(g
     """Removes the account together with its statements and transactions."""
     _own_account(db, user["id"], account_id)
     for s in db.execute("SELECT stored_path FROM statements WHERE account_id=?", (account_id,)).fetchall():
-        Path(s["stored_path"]).unlink(missing_ok=True)
+        storage.delete_file(s["stored_path"], user["id"])
     db.execute("DELETE FROM transactions WHERE account_id=?", (account_id,))
     db.execute("DELETE FROM accounts WHERE id=?", (account_id,))
     db.commit()
@@ -489,8 +489,23 @@ def import_files(files: list[UploadFile] = File(...), account_id: int | None = F
             item["warnings"] = res.warnings
             continue
         aid = _resolve_account(db, uid, account_id, new_account_name, new_account_type, res, cache)
-        sid = importing.create_statement(db, uid, aid, name, str(path), sha, MIME[kind], res)
-        db.commit()
+        stored_path = None
+        try:
+            stored_path = storage.persist(path, uid)
+            sid = importing.create_statement(db, uid, aid, name, stored_path, sha, MIME[kind], res)
+            db.commit()
+        except Exception:
+            db.rollback()
+            if stored_path and stored_path.startswith("s3://"):
+                try:
+                    storage.delete_file(stored_path, uid)
+                except Exception:
+                    pass
+            item["error"] = "Unable to securely save this statement. Please try again."
+            continue
+        finally:
+            if storage.cloud_enabled():
+                path.unlink(missing_ok=True)
         item.update(ok=True, statement_id=sid, count=len(res.rows), source_type=res.source_type, warnings=res.warnings)
     return {"results": results}
 
@@ -616,6 +631,93 @@ def commit_import(sid: int, user=Depends(current_user), db=Depends(get_db)):
     return importing.commit_statement(db, user["id"], sid)
 
 
+
+# ================================================================ transaction tags
+
+class TagCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    kind: str = "custom"
+
+
+class TagAssignment(BaseModel):
+    tag_ids: list[int] = Field(default_factory=list, max_length=20)
+
+
+@app.get("/api/tags")
+def list_tags(user=Depends(current_user), db=Depends(get_db)):
+    uid = user["id"]
+    rows = db.execute(
+        "SELECT g.id,g.name,g.kind,COUNT(t.id) AS transaction_count,"
+        "COALESCE(SUM(CASE WHEN t.type='expense' AND t.direction='debit' "
+        "AND t.status!='staged' AND t.removed_at IS NULL "
+        "AND (t.dup_status IS NULL OR t.dup_status='cleared') THEN t.amount_minor ELSE 0 END),0) AS expense_minor "
+        "FROM tags g LEFT JOIN transaction_tags tt ON tt.tag_id=g.id "
+        "LEFT JOIN transactions t ON t.id=tt.txn_id AND t.user_id=g.user_id "
+        "WHERE g.user_id=? GROUP BY g.id,g.name,g.kind ORDER BY g.kind,g.name",
+        (uid,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/tags")
+def create_tag(body: TagCreate, user=Depends(current_user), db=Depends(get_db)):
+    name = body.name.strip()
+    if not name or body.kind not in ("trip", "person", "custom"):
+        raise HTTPException(400, "Choose a tag name and valid type.")
+    existing = db.execute("SELECT id,name,kind FROM tags WHERE user_id=? AND kind=? AND lower(name)=lower(?)",
+                          (user["id"], body.kind, name)).fetchone()
+    if existing:
+        return dict(existing)
+    cur = db.execute("INSERT INTO tags(user_id,kind,name) VALUES(?,?,?)", (user["id"], body.kind, name))
+    tag_id = cur.lastrowid
+    db.commit()
+    return {"id": tag_id, "name": name, "kind": body.kind}
+
+
+@app.get("/api/transactions/{txn_id}/tags")
+def get_transaction_tags(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    if not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=? AND status!='staged'",
+                      (txn_id, user["id"])).fetchone():
+        raise LookupError("Transaction not found.")
+    return [dict(r) for r in db.execute(
+        "SELECT g.id,g.name,g.kind FROM tags g JOIN transaction_tags tt ON tt.tag_id=g.id "
+        "WHERE tt.txn_id=? AND g.user_id=? ORDER BY g.kind,g.name",
+        (txn_id, user["id"]))]
+
+
+@app.put("/api/transactions/{txn_id}/tags")
+def set_transaction_tags(txn_id: int, body: TagAssignment, user=Depends(current_user), db=Depends(get_db)):
+    uid = user["id"]
+    if not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=? AND status!='staged'",
+                      (txn_id, uid)).fetchone():
+        raise LookupError("Transaction not found.")
+    ids = sorted(set(body.tag_ids))
+    if ids:
+        valid = db.execute(
+            "SELECT id FROM tags WHERE user_id=? AND id IN (" + ",".join("?" * len(ids)) + ")",
+            [uid, *ids]).fetchall()
+        if len(valid) != len(ids):
+            raise HTTPException(400, "One or more tags were not found.")
+    db.execute("DELETE FROM transaction_tags WHERE txn_id=?", (txn_id,))
+    for tag_id in ids:
+        db.execute("INSERT INTO transaction_tags(txn_id,tag_id) VALUES(?,?)", (txn_id, tag_id))
+    db.commit()
+    return {"tag_ids": ids}
+
+
+@app.get("/api/tags/{tag_id}/transactions")
+def tag_transactions(tag_id: int, user=Depends(current_user), db=Depends(get_db)):
+    tag = db.execute("SELECT id,name,kind FROM tags WHERE id=? AND user_id=?", (tag_id,user["id"])).fetchone()
+    if not tag:
+        raise LookupError("Tag not found.")
+    rows = db.execute(
+        "SELECT t.id,t.date,t.amount_minor,t.direction,t.type,t.merchant,t.description,a.name AS account_name "
+        "FROM transaction_tags tt JOIN transactions t ON t.id=tt.txn_id "
+        "JOIN accounts a ON a.id=t.account_id "
+        "WHERE tt.tag_id=? AND t.user_id=? AND t.status!='staged' AND t.removed_at IS NULL "
+        "ORDER BY t.date DESC,t.id DESC LIMIT 1000", (tag_id,user["id"])).fetchall()
+    return {"tag": dict(tag), "transactions": [dict(r) for r in rows]}
+
+
 @app.get("/api/statements")
 def list_statements(user=Depends(current_user), db=Depends(get_db)):
     rows = db.execute(
@@ -629,10 +731,16 @@ def list_statements(user=Depends(current_user), db=Depends(get_db)):
 @app.get("/api/statements/{sid}/file")
 def statement_file(sid: int, user=Depends(current_user), db=Depends(get_db)):
     st = _own_statement(db, user["id"], sid)
-    path = Path(st["stored_path"]).resolve()
-    if UPLOAD_DIR.resolve() not in path.parents or not path.exists():
+    try:
+        kind, file = storage.get_file(st["stored_path"], user["id"])
+    except (OSError, ValueError):
         raise LookupError("The original file is no longer stored.")
-    return FileResponse(path, media_type=st["mime"] or "application/octet-stream", filename=st["filename"])
+    if kind == "local":
+        return FileResponse(file, media_type=st["mime"] or "application/octet-stream", filename=st["filename"])
+    from urllib.parse import quote
+    return StreamingResponse(storage.iter_body(file), media_type=st["mime"] or "application/octet-stream",
+                             headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(st["filename"]),
+                                      "Cache-Control": "private, no-store"})
 
 
 @app.delete("/api/statements/{sid}")
@@ -645,7 +753,7 @@ def delete_statement(sid: int, transactions: bool = False, user=Depends(current_
             marks = ",".join("?" * len(ids))
             db.execute(f"UPDATE transactions SET transfer_pair_id=NULL WHERE transfer_pair_id IN ({marks})", ids)
             db.execute(f"DELETE FROM transactions WHERE id IN ({marks})", ids)
-    Path(st["stored_path"]).unlink(missing_ok=True)
+    storage.delete_file(st["stored_path"], user["id"])
     db.execute("DELETE FROM statements WHERE id=?", (sid,))
     db.commit()
     return {"ok": True}

@@ -101,6 +101,7 @@ def extract_pdf(path: str, password: str | None = None) -> Extracted:
         if len(pdf.pages) > 80:
             out.warnings.append("This PDF has more than 80 pages; only the first 80 were read.")
         for page in pdf.pages[:80]:
+            page = page.dedupe_chars(tolerance=1)
             words = [
                 Word(w["text"], w["x0"], w["x1"], w["top"], w["bottom"])
                 for w in page.extract_words(x_tolerance=1.5, y_tolerance=2, keep_blank_chars=False)

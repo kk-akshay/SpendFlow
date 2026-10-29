@@ -1,0 +1,150 @@
+"""PostgreSQL adapter for the existing SpendFlow DB API.
+
+The adapter deliberately retains the existing dict/index row contract and SQL
+parameter style, avoiding a wholesale rewrite of the application services.
+New database connections are leased from a small psycopg pool per request.
+"""
+from __future__ import annotations
+
+import os
+import re
+import atexit
+from functools import lru_cache
+
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+
+# Every app-inserted table with a generated integer id.  RETURNING is used
+# rather than a race-prone SELECT MAX(id) or a connection-global lastval().
+IDENTITY_TABLES = {
+    "users", "accounts", "categories", "statements", "transactions", "splits",
+    "import_exclusions", "classification_rules", "transaction_groups",
+    "exclusion_rules", "flow_groups", "people", "people_upi", "budgets", "goals",
+}
+_INSERT = re.compile(r"^\s*INSERT\s+INTO\s+([a-z_]+)\b", re.I)
+
+
+class PgRow(dict):
+    """psycopg mapping with SQLite Row's positional access."""
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return list(self.values())[key]
+        return super().__getitem__(key)
+
+
+class PgCursor:
+    def __init__(self, raw, returning_id=False):
+        self._raw = raw
+        self._returning_id = returning_id
+        self._id = None
+
+    @property
+    def lastrowid(self):
+        if self._returning_id and self._id is None:
+            row = self._raw.fetchone()
+            self._id = row["id"] if row else None
+        return self._id
+
+    @property
+    def rowcount(self):
+        return self._raw.rowcount
+
+    def fetchone(self):
+        row = self._raw.fetchone()
+        return PgRow(row) if row is not None else None
+
+    def fetchall(self):
+        return [PgRow(row) for row in self._raw.fetchall()]
+
+    def __iter__(self):
+        for row in self._raw:
+            yield PgRow(row)
+
+
+def _convert_sql(sql: str) -> tuple[str, bool]:
+    # The app's pre-existing queries use SQLite's ? parameters. They are all
+    # bound data parameters; never interpolate parameter *values* into SQL.
+    ignore = bool(re.match(r"^\s*INSERT\s+OR\s+IGNORE\b", sql, re.I))
+    if ignore:
+        sql = re.sub(r"INSERT\s+OR\s+IGNORE", "INSERT", sql, count=1, flags=re.I)
+        sql = sql.rstrip() + " ON CONFLICT DO NOTHING"
+    sql = sql.replace("datetime('now')",
+                      "to_char(timezone('UTC', now()), 'YYYY-MM-DD HH24:MI:SS')")
+    sql = re.sub(r"julianday\(([^)]+)\)\s*-\s*julianday\(([^)]+)\)",
+                 r"(\1::date - \2::date)", sql, flags=re.I)
+    # SQLite LIKE is case-insensitive for ASCII; retain case-insensitive search.
+    sql = re.sub(r"\bLIKE\b", "ILIKE", sql, flags=re.I)
+    # SQLite allows boolean values in SUM(); PostgreSQL needs integers.
+    sql = re.sub(r"SUM\((\w+(?:\.\w+)?\s*=\s*'[^']+')\)",
+                 r"SUM(CASE WHEN \1 THEN 1 ELSE 0 END)", sql, flags=re.I)
+    # SQLite's string concatenation accepts integer IDs; PG needs explicit cast.
+    sql = re.sub(r"'id'\s*\|\|\s*id\b", "'id' || id::text", sql, flags=re.I)
+    sql = sql.replace("?", "%s")
+    m = _INSERT.match(sql)
+    returning = bool(m and m.group(1).lower() in IDENTITY_TABLES
+                     and not re.search(r"\bRETURNING\b", sql, re.I))
+    if returning:
+        sql = sql.rstrip() + " RETURNING id"
+    return sql, returning
+
+
+class PgConnection:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        converted, returning = _convert_sql(sql)
+        raw = self._conn.execute(converted, tuple(params))
+        return PgCursor(raw, returning_id=returning)
+
+    def executemany(self, sql, params):
+        converted, returning = _convert_sql(sql)
+        if returning:
+            # Preserve normal executemany behavior; callers do not use IDs.
+            converted = re.sub(r"\s+RETURNING id\s*$", "", converted, flags=re.I)
+        raw = self._conn.cursor()
+        raw.executemany(converted, params)
+        return PgCursor(raw)
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+
+@lru_cache(maxsize=1)
+def pool():
+    url = os.environ["DATABASE_URL"]
+    if not url.startswith(("postgresql://", "postgres://")):
+        raise ValueError("DATABASE_URL must be a PostgreSQL connection string")
+    instance = ConnectionPool(
+        conninfo=url, min_size=0, max_size=5, timeout=20, open=True,
+        kwargs={"row_factory": dict_row},
+        # Neon pooled connections may be closed while SpendFlow is idle.
+        # Check before handing a cached connection to a request.
+        check=ConnectionPool.check_connection,
+        max_lifetime=300, max_idle=60,
+    )
+    atexit.register(instance.close)
+    return instance
+
+
+def pg_schema(sqlite_schema: str) -> list[str]:
+    """Translate stable SQLite schema declarations into PostgreSQL DDL."""
+    schema = sqlite_schema.replace(
+        "INTEGER PRIMARY KEY", "BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY")
+    schema = re.sub(r"\bBLOB\b", "BYTEA", schema)
+    schema = schema.replace("DEFAULT (datetime('now'))",
+                            "DEFAULT to_char(timezone('UTC', now()), 'YYYY-MM-DD HH24:MI:SS')")
+    # No SQLite pragmas, triggers, or procedural code in the shared schema.
+    return [stmt.strip() for stmt in schema.split(";") if stmt.strip()]
+
+
+def init_postgres(sqlite_schema: str):
+    with pool().connection() as conn:
+        for stmt in pg_schema(sqlite_schema):
+            conn.execute(stmt)
+        # Existing installations can have a schema created before these fields.
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS removed_at TEXT")
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS excluded_rule_id BIGINT")

@@ -1,4 +1,5 @@
 """SQLite schema and connection helpers. Money is stored as integer minor units (paise/cents)."""
+import os
 import sqlite3
 
 from .config import DB_PATH
@@ -224,6 +225,22 @@ CREATE TABLE IF NOT EXISTS budgets(
   limit_minor INTEGER NOT NULL CHECK(limit_minor > 0)
 );
 
+CREATE TABLE IF NOT EXISTS tags(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('trip','person','custom')),
+  name TEXT NOT NULL CHECK(length(trim(name))>0),
+  UNIQUE(user_id,kind,name)
+);
+CREATE INDEX IF NOT EXISTS idx_tags_owner ON tags(user_id,kind);
+
+CREATE TABLE IF NOT EXISTS transaction_tags(
+  txn_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY(txn_id,tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_transaction_tags_tag ON transaction_tags(tag_id);
+
 CREATE TABLE IF NOT EXISTS goals(
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -257,6 +274,8 @@ DEFAULT_CATEGORIES = [
 
 
 def connect() -> sqlite3.Connection:
+    if os.environ.get('DATABASE_URL'):
+        raise RuntimeError('Use get_db() to obtain a PostgreSQL connection')
     conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -266,6 +285,10 @@ def connect() -> sqlite3.Connection:
 
 
 def init_db() -> None:
+    if os.environ.get('DATABASE_URL'):
+        from .postgres import init_postgres
+        init_postgres(SCHEMA)
+        return
     conn = connect()
     try:
         conn.executescript(SCHEMA)
@@ -282,6 +305,11 @@ def init_db() -> None:
 
 def get_db():
     """FastAPI dependency: one connection per request."""
+    if os.environ.get("DATABASE_URL"):
+        from .postgres import PgConnection, pool
+        with pool().connection() as connection:
+            yield PgConnection(connection)
+        return
     conn = connect()
     try:
         yield conn
@@ -289,7 +317,7 @@ def get_db():
         conn.close()
 
 
-def seed_categories(db: sqlite3.Connection, user_id: int) -> None:
+def seed_categories(db, user_id: int) -> None:
     for i, (name, color, kind) in enumerate(DEFAULT_CATEGORIES):
         db.execute(
             "INSERT OR IGNORE INTO categories(user_id,name,color,kind,builtin,sort) VALUES(?,?,?,?,1,?)",

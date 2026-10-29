@@ -10,6 +10,9 @@ routes.review = async (main) => {
   let lastUndo = null;
   let busy = false;
   let typeOverride = null;
+  let availableTags = [];
+  let selectedTagIds = [];
+  const loadTags = async () => { try { availableTags = await api('/tags'); } catch { availableTags = []; } };
 
   const load = async () => { state = await api('/review/next?scope=' + scope + '&order=' + order); draw(); refreshBadge(); };
 
@@ -43,22 +46,54 @@ routes.review = async (main) => {
           ${t.flags.map((f) => `<div class="flag">⚠ ${esc(f)}</div>`).join('')}
           ${item.pair ? `<div class="flag" style="color:var(--accent)">↔ Matches ${money(item.pair.amount_minor)} in ${esc(item.pair.account_name)} on ${fdate(item.pair.date)}</div>` : ''}
         </article></div>
-      <div class="ask">What was this transaction for?</div>
+      <section class="review-prepare">
+        <div class="review-prepare-title"><h2>Before you categorize</h2>
+          <p>Add optional details first. Choosing a category saves and moves to the next transaction.</p></div>
+        <div class="review-tools" role="group" aria-label="Transaction details">
+          <button type="button" class="review-tool ${opts.showNote || opts.note ? 'is-selected' : ''}" id="b-note" aria-expanded="${opts.showNote}">
+            <span class="review-tool-symbol" aria-hidden="true">✎</span><span class="review-tool-name">Note</span>
+            <span class="review-tool-hint">${opts.note ? 'Added' : 'Add details'}</span>
+          </button>
+          <button type="button" class="review-tool" id="b-split" title="Split amount across categories and save">
+            <span class="review-tool-symbol" aria-hidden="true">◫</span><span class="review-tool-name">Split</span>
+            <span class="review-tool-hint">Split &amp; save</span>
+          </button>
+          <button type="button" class="review-tool ${opts.recurring ? 'is-selected' : ''}" id="b-rec" aria-pressed="${opts.recurring}">
+            <span class="review-tool-symbol" aria-hidden="true">↻</span><span class="review-tool-name">Recurring</span>
+            <span class="review-tool-hint">${opts.recurring ? 'Marked' : 'Mark repeat'}</span>
+          </button>
+        </div>
+        ${opts.showNote ? `<div class="field review-note-field"><label for="note">Transaction note</label><input id="note" placeholder="e.g. Dinner on Goa trip" maxlength="500" value="${esc(opts.note)}"></div>` : ''}
+      <div class="field review-tags" style="margin-top:18px">
+        <label>Tags (optional) · Trip, person or project</label>
+        <div class="row" style="gap:7px">
+          ${availableTags.map(tag => `<label class="check small" style="margin:0;padding:6px 10px;border:1px solid var(--line);border-radius:999px"><input type="checkbox" data-tag-id="${tag.id}" ${selectedTagIds.includes(tag.id) ? 'checked' : ''} style="width:16px;height:16px"> ${esc(tag.name)}</label>`).join('')}
+          <button class="btn sm" id="create-review-tag" type="button">+ Add tag</button>
+        </div>
+        <div class="small muted" style="margin-top:6px">Tags don't change whether a transaction counts as an expense, income or loan.</div>
+      </div>
+        <div class="review-rule-options">
+          <label class="review-rule">
+            <input type="checkbox" id="remember" ${opts.remember ? 'checked' : ''}>
+            <span><strong>Remember this classification</strong><small>Automatically categorize future matches for this merchant and account.</small></span>
+          </label>
+          ${item.similar_count > 0 ? `<label class="review-rule">
+            <input type="checkbox" id="sim" ${opts.similar ? 'checked' : ''}>
+            <span><strong>Apply category to ${item.similar_count} similar transaction${item.similar_count > 1 ? 's' : ''}</strong><small>Same merchant and account · category only, not notes or tags.</small></span>
+          </label>` : ''}
+        </div>
+        <div class="review-secondary-actions">
+          <button class="btn sm" id="b-skip">Skip for now</button>
+          <button class="btn sm ghost" id="b-undo" ${lastUndo ? '' : 'disabled'}>Undo last action</button>
+        </div>
+      </section>
+      <div class="ask">Choose a category to save &amp; continue</div>
       ${sgCat ? `<div class="suggest"><span class="dot" style="background:var(--shade-2);width:14px;height:14px"></span>
         <div class="grow"><b>${esc(sgCat.name)}?</b><span class="small muted">${esc(sg.reason)}</span></div>
-        <button class="btn primary" id="accept">Yes <kbd style="margin-left:6px;background:transparent;border-color:rgba(255,255,255,.4);color:inherit">Enter</kbd></button></div>` : ''}
+        <button class="btn primary" id="accept">Use suggestion <kbd style="margin-left:6px;background:transparent;border-color:rgba(255,255,255,.4);color:inherit">Enter</kbd></button></div>` : ''}
       <div class="cats" role="group" aria-label="Categories">
         ${orderedCats().map((c, i) => `<button class="cat" style="--c:var(--shade-3)" data-id="${c.id}" ${sg && sg.category_id === c.id ? 'data-sg' : ''}><kbd>${shortcut(i)}</kbd><span class="dot"></span>${esc(c.name)}</button>`).join('')}
         <button class="cat" id="newcat" style="--c:var(--muted)"><kbd>+</kbd><span style="font-size:20px;line-height:12px">+</span>New</button></div>
-      <div class="actions">
-        <button class="btn sm ${opts.showNote || opts.note ? 'primary' : ''}" id="b-note">${opts.note ? 'Note added' : 'Add note'} <kbd>n</kbd></button>
-        <button class="btn sm" id="b-split">Split <kbd>/</kbd></button>
-        <button class="btn sm ${opts.recurring ? 'primary' : ''}" id="b-rec">${opts.recurring ? 'Recurring ✓' : 'Recurring'} <kbd>.</kbd></button>
-        <button class="btn sm" id="b-skip">Skip for now <kbd>␣</kbd></button>
-        <button class="btn sm" id="b-undo" ${lastUndo ? '' : 'disabled'}>Undo <kbd>⌫</kbd></button></div>
-      ${opts.showNote ? `<div class="field" style="margin-top:14px"><label for="note" class="sr">Note</label><input id="note" placeholder="Add a note (optional)" maxlength="500" value="${esc(opts.note)}"></div>` : ''}
-      <label class="check small" style="justify-content:center"><input type="checkbox" id="remember" ${opts.remember ? 'checked' : ''}> Remember this merchant/account pattern for future imports</label>
-      ${item.similar_count > 0 ? `<label class="check small" style="justify-content:center;margin-top:8px"><input type="checkbox" id="sim" ${opts.similar ? 'checked' : ''}> Also apply to ${item.similar_count} other “${esc(t.merchant)}” transaction${item.similar_count > 1 ? 's' : ''} waiting for review</label>` : ''}
       <div class="keys"><kbd>Enter</kbd> accept suggestion · <kbd>→</kbd> accept / <kbd>←</kbd> skip · category keys shown on buttons</div></div>`;
     wire(item);
   }
@@ -90,13 +125,21 @@ routes.review = async (main) => {
       const body = { ...payload, note: opts.note || undefined, recurring: opts.recurring || undefined, remember: !!opts.remember, apply_similar: opts.similar && state.item.similar_count > 0 && !!payload.category_id };
       if (typeOverride) body.type = typeOverride;
       const r = await api(`/review/${t.id}/categorize?scope=${scope}&order=${order}`, { method: 'POST', body });
+      if (selectedTagIds.length) {
+        try {
+          await api('/transactions/' + t.id + '/tags', { method: 'PUT', body: { tag_ids: selectedTagIds } });
+        } catch (tagError) {
+          toast('Category saved but tags could not be saved: ' + tagError.message, { err: true });
+        }
+      }
+      selectedTagIds = [];
       lastUndo = r.undo; state = { item: r.item, progress: r.progress }; resetOpts();
       if (r.applied_similar) toast(`Applied to ${r.applied_similar} similar transaction${r.applied_similar > 1 ? 's' : ''} too`, { action: 'Undo', onAction: undo });
       setTimeout(draw, 160);
     } catch (e) { card && card.classList.remove('out-r'); fail(e); }
     busy = false;
   }
-  function resetOpts() { opts = { note: '', recurring: false, similar: opts.similar, remember: false, showNote: false }; typeOverride = null; }
+  function resetOpts() { opts = { note: '', recurring: false, similar: false, remember: false, showNote: false }; typeOverride = null; }
 
   async function skip() {
     if (busy || !state.item) return;
@@ -104,6 +147,7 @@ routes.review = async (main) => {
     const card = $('#card'); card && card.classList.add('out-l');
     try {
       const r = await api(`/review/${state.item.txn.id}/skip?scope=${scope}&order=${order}`, { method: 'POST' });
+      selectedTagIds = [];
       lastUndo = r.undo; state = { item: r.item, progress: r.progress }; resetOpts(); setTimeout(draw, 160);
     } catch (e) { card && card.classList.remove('out-l'); fail(e); }
     busy = false;
@@ -127,6 +171,20 @@ routes.review = async (main) => {
     $('#accept') && ($('#accept').onclick = accept);
     $('#review-order').onchange = (e) => { order = e.target.value; localStorage.setItem('spendflow-review-order', order); load(); };
     $('#remember').onchange = (e) => { opts.remember = e.target.checked; };
+    $$('[data-tag-id]', main).forEach(el => { el.onchange = () => {
+      selectedTagIds = $$('[data-tag-id]:checked', main).map(x => +x.dataset.tagId);
+    }; });
+    $('#create-review-tag').onclick = () => {
+      const m = modal('<h2>New transaction tag</h2><div id="tag-error"></div><div class="field"><label>Name</label><input id="new-tag-name" maxlength="80" placeholder="e.g. Goa trip"></div><div class="field"><label>Type</label><select id="new-tag-kind"><option value="trip">Trip</option><option value="person">Person / beneficiary</option><option value="custom">Other</option></select></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="save-new-tag">Add tag</button></div>');
+      $('[data-x]', m.el).onclick = () => m.close();
+      $('#save-new-tag', m.el).onclick = async () => {
+        try {
+          const tag = await api('/tags', { method: 'POST', body: { name: $('#new-tag-name', m.el).value, kind: $('#new-tag-kind', m.el).value } });
+          if (!selectedTagIds.includes(tag.id)) selectedTagIds.push(tag.id);
+          await loadTags(); m.close(); draw();
+        } catch (e) { $('#tag-error', m.el).textContent = e.message; }
+      };
+    };
     $('#b-skip').onclick = skip; $('#b-undo').onclick = undo;
     $('#b-rec').onclick = () => { opts.recurring = !opts.recurring; draw(); };
     $('#b-note').onclick = () => { opts.showNote = !opts.showNote; draw(); if (opts.showNote) $('#note').focus(); };
@@ -146,7 +204,7 @@ routes.review = async (main) => {
       <div class="grid">${['income', 'expense', 'transfer'].map((k) => `<button class="btn" data-k="${k}"><b>${typeLabel[k]}</b></button>`).join('')}</div>`);
     $$('[data-k]', m.el).forEach((b) => (b.onclick = () => {
       typeOverride = b.dataset.k; m.close();
-      if (typeOverride === 'transfer') { const tc = S.cats.find((c) => c.kind === 'transfer'); if (tc) submit({ category_id: tc.id }); } else draw();
+      draw();
     }));
   }
 
@@ -232,5 +290,6 @@ routes.review = async (main) => {
   }
   document.addEventListener('keydown', onKey);
   S.cleanup = () => document.removeEventListener('keydown', onKey);
+  await loadTags();
   await load();
 };

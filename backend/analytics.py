@@ -300,7 +300,7 @@ def insights(db, user_id: int, d: dict, cats: dict) -> list[dict]:
         if diff > 0 and diff >= 0.1 * b["prev_minor"] and diff >= 50000:
             out.append({"tone": "info", "text": f"{b['name']} is your biggest rise: {fmt_money(diff)} more than last month."})
     top = db.execute(
-        f"SELECT merchant, SUM({EXP}) AS amt, COUNT(*) AS n FROM ({LINES}) WHERE month=? AND type='expense' AND kind!='savings' "
+        f"SELECT MIN(merchant) AS merchant, SUM({EXP}) AS amt, COUNT(*) AS n FROM ({LINES}) WHERE month=? AND type='expense' AND kind!='savings' "
         f"AND merchant!='' GROUP BY merchant_key ORDER BY amt DESC LIMIT 1", (user_id, month)).fetchone()
     if top and top["amt"] and top["amt"] > 0:
         out.append({"tone": "info", "text": f"Most spent on one merchant: {top['merchant']}, {fmt_money(top['amt'])} across {top['n']} payment{'s' if top['n'] != 1 else ''}."})

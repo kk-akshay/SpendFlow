@@ -24,14 +24,14 @@ function brandLogo() {
 }
 const DESKTOP_TABS = [
   ['dashboard','Home'], ['review','Review'], ['transactions','History'],
-  ['calendar','Calendar'], ['groups','Linked Money'], ['people','People & Loans'],
+  ['calendar','Calendar'], ['groups','Linked Money'], ['people','People & Loans'], ['tags','Tags & Trips'],
   ['plan','Plan'], ['settings','Settings']
 ];
 const MOBILE_TABS = [
   ['dashboard','Home'], ['transactions','History'], ['groups','Linked Money'], ['calendar','Calendar']
 ];
 const MORE_TABS = [
-  ['review','Review'], ['people','People & Loans'], ['plan','Plan'], ['settings','Settings']
+  ['review','Review'], ['people','People & Loans'], ['tags','Tags & Trips'], ['plan','Plan'], ['settings','Settings']
 ];
 function renderShell() {
   const sidebar = DESKTOP_TABS.map(([route,label])=>
