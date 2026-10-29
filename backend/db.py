@@ -225,6 +225,16 @@ CREATE TABLE IF NOT EXISTS budgets(
   limit_minor INTEGER NOT NULL CHECK(limit_minor > 0)
 );
 
+CREATE TABLE IF NOT EXISTS import_jobs(
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK(status IN ('queued','processing','done','failed')),
+  payload TEXT NOT NULL,
+  result TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_import_jobs_user ON import_jobs(user_id,status);
+
 CREATE TABLE IF NOT EXISTS tags(
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
