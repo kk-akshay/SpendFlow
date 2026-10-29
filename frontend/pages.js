@@ -100,6 +100,7 @@ async function openTxn(id, done) {
     <div class="field"><label>Category</label><div class="row" id="tcats" style="gap:8px">${S.cats.map((c) => `<button class="pill" data-c="${c.id}" style="cursor:pointer;border:1.5px solid ${c.id === catId ? esc(c.color) : 'transparent'}">${catDot(c)}${esc(c.name)}</button>`).join('')}</div></div>
     <div class="grid g2"><div class="field"><label>Type</label><select id="tt">${['expense', 'income', 'transfer'].map((k) => `<option value="${k}" ${k === type ? 'selected' : ''}>${typeLabel[k]}</option>`).join('')}</select></div>
       <div class="field"><label>Repeats</label><select id="tr"><option value="">Not recurring</option>${['weekly', 'monthly', 'yearly'].map((f) => `<option value="${f}" ${recurring && t.recurring_freq === f ? 'selected' : ''}>${f[0].toUpperCase() + f.slice(1)}</option>`).join('')}</select></div></div>
+    <label class="check small"><input type="checkbox" id="tremember"> Remember classification for future imports</label>
     <div class="field"><label for="tn">Note</label><input id="tn" maxlength="500" value="${esc(t.note || '')}" placeholder="Add a note"></div>
     <details style="margin-bottom:8px"><summary class="small muted" style="cursor:pointer">Fix merchant, date or amount</summary><div class="grid g2" style="margin-top:12px">
       <div class="field"><label for="tm">Merchant</label><input id="tm" value="${esc(t.merchant)}" maxlength="80"></div><div class="field"><label for="td">Date</label><input id="td" type="date" value="${esc(t.date)}"></div>
@@ -111,8 +112,12 @@ async function openTxn(id, done) {
   const patch = async (body, msg) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
   $('#tdel', m.el).onclick = async () => { m.close(); if (await confirmBox({ title: 'Delete this transaction?', body: 'It will be removed from your history and totals.', ok: 'Delete', danger: true })) { try { await api('/transactions/' + id, { method: 'DELETE' }); toast('Transaction deleted'); refreshBadge(); done && done(); } catch (e) { fail(e); } } };
+  const exclude = document.createElement('button'); exclude.className='btn sm danger'; exclude.textContent='Delete and exclude future matches';
+  $('#tdel',m.el).after(exclude);
+  exclude.onclick=async()=>{if(!await confirmBox({title:'Delete and permanently exclude matching imports?',body:'Matches require the same account, merchant, description, direction and amount. Repeated genuine payments could also match. Remove the rule later in Linked money.',ok:'Confirm exclusion',danger:true}))return;
+    try{await api('/transactions/'+id+'/exclude',{method:'POST',body:{confirmed:true}});m.close();toast('Exclusion saved');refreshBadge();done&&done();}catch(e){fail(e);}};
   $('#tsave', m.el).onclick = () => {
-    const freq = $('#tr', m.el).value, body = { note: $('#tn', m.el).value, recurring: !!freq, recurring_freq: freq || undefined, type: $('#tt', m.el).value };
+    const freq = $('#tr', m.el).value, body = { remember: $('#tremember', m.el).checked, note: $('#tn', m.el).value, recurring: !!freq, recurring_freq: freq || undefined, type: $('#tt', m.el).value };
     if (catId && (changed || t.status !== 'categorized') && !t.is_split) body.category_id = catId;
     else if (t.status === 'categorized' && catId && !t.is_split) body.category_id = catId;
     if ($('#tm', m.el).value !== t.merchant) body.merchant = $('#tm', m.el).value;
@@ -272,3 +277,20 @@ routes.settings = async (main) => {
     } catch (er) { fail(er); }
   };
 };
+
+/* Daily calendar, reusing the existing transaction editor. */
+routes.calendar = async (main, [initial]) => {
+  let day = /^\\d{4}-\\d{2}-\\d{2}$/.test(initial || '') ? initial : todayIso();
+  async function draw(){
+    const r=await api('/transactions?'+new URLSearchParams({from:day,to:day,sort:'date_desc',limit:'200'}));
+    main.innerHTML='<div class="head"><h1>Calendar</h1></div><div class="card flat"><div class="row" id="day-controls"></div></div><div class="card" style="margin-top:16px"><h2>'+fdate(day)+' · '+r.total+' transactions</h2><div class="list">'+(r.items.map(txnRow).join('')||'<p class="muted">No transactions for this date.</p>')+'</div></div>';
+    $('#day-controls').innerHTML='<button class="btn sm" id="previous-day">←</button><input type="date" id="chosen-day" aria-label="Chosen day" style="flex:1;min-width:150px" value="'+esc(day)+'"><button class="btn sm" id="next-day">→</button><button class="btn sm" id="go-today">Today</button><button class="btn primary sm" id="create-day">+ Add</button>';
+    const move=n=>{const d=new Date(day+'T12:00:00');d.setDate(d.getDate()+n);day=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');draw();};
+    $('#previous-day').onclick=()=>move(-1);$('#next-day').onclick=()=>move(1);$('#go-today').onclick=()=>{day=todayIso();draw();};$('#chosen-day').onchange=e=>{day=e.target.value;draw();};$('#create-day').onclick=()=>manualTransaction(day,draw);
+    $$('[data-txn]',main).forEach(el=>{el.onclick=()=>openTxn(+el.dataset.txn,draw);el.onkeydown=e=>{if(e.key==='Enter')openTxn(+el.dataset.txn,draw);};});
+  } await draw();
+};
+function manualTransaction(day,done){
+ const m=modal('<h2>Add transaction</h2><div id="manual-error"></div><div class="field"><label>Account</label><select id="ma">'+S.accounts.map(a=>'<option value="'+a.id+'">'+esc(a.name)+'</option>').join('')+'</select></div><div class="field"><label>Date</label><input type="date" id="md" value="'+esc(day)+'"></div><div class="field"><label>Amount</label><input id="mv" inputmode="decimal"></div><div class="field"><label>Money direction</label><select id="mdir"><option value="debit">Money out</option><option value="credit">Money in</option></select></div><div class="field"><label>Description</label><input id="mx" maxlength="500"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="msave">Add</button></div>');
+ $('[data-x]',m.el).onclick=()=>m.close();$('#msave',m.el).onclick=async()=>{try{await api('/transactions',{method:'POST',body:{account_id:+$('#ma',m.el).value,date:$('#md',m.el).value,amount_minor:toMinor($('#mv',m.el).value),direction:$('#mdir',m.el).value,description:$('#mx',m.el).value}});m.close();refreshBadge();done();}catch(e){$('#manual-error',m.el).textContent=e.message;}};
+}
