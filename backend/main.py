@@ -616,7 +616,7 @@ def list_transactions(request: Request, user=Depends(current_user), db=Depends(g
 @app.get("/api/transactions/{txn_id}")
 def get_transaction(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
     t = txns.get_txn(db, user["id"], txn_id)
-    if not t:
+    if not t or t.get("removed_at"):
         raise LookupError("Transaction not found.")
     return {"txn": t, "suggestion": txns.suggest(db, user["id"], t)}
 
