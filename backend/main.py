@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from . import analytics, importing, ledger, parse_llm, txns
 from .auth import (EMAIL_RE, clear_throttle, current_user, end_session, hash_password, require_csrf,
-                   start_session, throttle, verify_password)
+                   start_session, throttle, verify_password, redeem_password_reset, update_password)
 from .config import (CURRENCY, FRONTEND_DIR, LOCALE, MAX_FILES_PER_IMPORT, MAX_UPLOAD_BYTES, UPLOAD_DIR)
 from .db import get_db, init_db, seed_categories
 from .extract import PasswordRequired, UnreadableDocument, sniff_kind
@@ -102,6 +102,39 @@ def logout(request: Request, response: Response, db=Depends(get_db)):
 @app.get("/api/auth/me")
 def me(user=Depends(current_user)):
     return user
+
+
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post("/api/auth/change-password")
+def change_password(b: ChangePassword, response: Response, user=Depends(current_user), db=Depends(get_db)):
+    row = db.execute("SELECT pw_hash,pw_salt FROM users WHERE id=?", (user["id"],)).fetchone()
+    if not verify_password(b.current_password, row["pw_hash"], row["pw_salt"]):
+        raise HTTPException(401, "Current password is incorrect.")
+    update_password(db, user["id"], b.new_password)
+    response.delete_cookie("spendflow_session", path="/")
+    response.delete_cookie("tally_session", path="/")
+    return {"ok": True, "message": "Password changed. Please sign in again."}
+
+
+class PasswordResetIn(BaseModel):
+    token: str
+    new_password: str
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(b: PasswordResetIn, request: Request, response: Response, db=Depends(get_db)):
+    throttle("reset|" + (request.client.host if request.client else ""), limit=12, window=600)
+    if len(b.new_password) < 12 or len(b.new_password) > 1024:
+        raise HTTPException(400, "Choose a password of at least 12 characters.")
+    if not redeem_password_reset(db, b.token, b.new_password):
+        raise HTTPException(400, "That reset code is invalid or expired. Generate a new code locally.")
+    response.delete_cookie("spendflow_session", path="/")
+    response.delete_cookie("tally_session", path="/")
+    return {"ok": True}
 
 
 class DeleteAccount(BaseModel):
