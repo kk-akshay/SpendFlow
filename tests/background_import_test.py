@@ -38,6 +38,14 @@ with TestClient(app, headers={"x-requested-with": "spendflow"}) as client:
     with TestClient(app, headers={"x-requested-with":"spendflow"}) as other:
         assert other.post("/api/auth/register", json={"email":"other@example.com","password":"password123"}).status_code == 200
         assert other.get(f"/api/imports/jobs/{job_id}").status_code == 404
-    assert client.post(f"/api/imports/{result['statement_id']}/commit").status_code == 200
+    commit = client.post(f"/api/imports/{result['statement_id']}/commit-job")
+    assert commit.status_code == 202, commit.text
+    for _ in range(160):
+        confirmed = client.get("/api/imports/jobs/" + commit.json()["job_id"]).json()
+        if confirmed["status"] in ("done", "failed"):
+            break
+        time.sleep(0.1)
+    assert confirmed["status"] == "done", confirmed
+    assert confirmed["commit_result"]["imported"] == 45, confirmed
     assert client.get("/api/review/next").json()["progress"]["total"] == 45
 print("Background import job regression checks passed")
