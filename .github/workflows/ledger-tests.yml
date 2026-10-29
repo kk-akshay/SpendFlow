@@ -25,6 +25,7 @@ jobs:
       - run: python tests/people_selector_test.py
       - run: python tests/monochrome_ui_test.py
       - run: python tests/mobile_shell_test.py
+      - run: python tests/mobile_router_test.py
       - run: python tests/make_samples.py tests/samples
       - run: python tests/api_test.py tests/samples
       - uses: actions/setup-node@v4
