@@ -1,4 +1,4 @@
-"""Tally API + static frontend."""
+"""SpendFlow API + static frontend."""
 from __future__ import annotations
 
 import csv
@@ -28,7 +28,7 @@ from .parse_common import parse_date
 from .statement_parser import parse_file
 
 init_db()
-app = FastAPI(title="Tally", docs_url=None, redoc_url=None, dependencies=[Depends(require_csrf)])
+app = FastAPI(title="SpendFlow", docs_url=None, redoc_url=None, dependencies=[Depends(require_csrf)])
 
 
 @app.exception_handler(RequestValidationError)
@@ -120,7 +120,7 @@ def delete_account(b: DeleteAccount, response: Response, user=Depends(current_us
     db.execute("DELETE FROM users WHERE id=?", (user["id"],))
     db.commit()
     _delete_files(user["id"])
-    response.delete_cookie("tally_session", path="/")
+    response.delete_cookie("spendflow_session", path="/")
     return {"ok": True}
 
 
@@ -559,6 +559,7 @@ class CategorizeIn(BaseModel):
     type: str | None = None
     apply_similar: bool = False
     remember: bool = False
+    remember: bool = False
     splits: list[SplitIn] | None = None
 
 
@@ -634,6 +635,7 @@ class TxnEdit(BaseModel):
     direction: str | None = None
     send_to_review: bool = False
     remember: bool = False
+    remember: bool = False
 
 
 @app.patch("/api/transactions/{txn_id}")
@@ -680,7 +682,7 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         db.execute(f"UPDATE transactions SET {', '.join(f'{k}=?' for k in vals)} WHERE id=?", [*vals.values(), txn_id])
 
     if "category_id" in body or body.get("splits"):
-        payload = {k: body[k] for k in ("category_id", "splits", "note", "recurring", "recurring_freq", "type") if k in body}
+        payload = {k: body[k] for k in ("category_id", "splits", "note", "recurring", "recurring_freq", "type", "remember") if k in body}
         res = txns.apply_category(db, uid, txn_id, payload)
         undo = (undo + res["undo"]) if undo else res["undo"]
     else:
@@ -730,8 +732,7 @@ def restore_transactions(b: RestoreIn, user=Depends(current_user), db=Depends(ge
 def delete_transaction(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
     if not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=?", (txn_id, user["id"])).fetchone():
         raise LookupError("Transaction not found.")
-    db.execute("UPDATE transactions SET transfer_pair_id=NULL WHERE transfer_pair_id=?", (txn_id,))
-    db.execute("DELETE FROM transactions WHERE id=?", (txn_id,))
+    db.execute("UPDATE transactions SET removed_at=datetime('now') WHERE id=? AND user_id=?", (txn_id, user["id"]))
     db.commit()
     return {"ok": True}
 
@@ -760,7 +761,7 @@ def export_csv(user=Depends(current_user), db=Depends(get_db)):
             yield buf.getvalue()
 
     return StreamingResponse(gen(), media_type="text/csv",
-                             headers={"Content-Disposition": 'attachment; filename="tally-transactions.csv"'})
+                             headers={"Content-Disposition": 'attachment; filename="spendflow-transactions.csv"'})
 
 
 
@@ -868,6 +869,95 @@ def add_transaction(b: ManualTxn, user=Depends(current_user), db=Depends(get_db)
     db.commit()
     return {"txn":txns.get_txn(db,uid,cur.lastrowid)}
 
+
+
+# ================================================================ saved rules and recoverable removals
+
+class ExcludeIn(BaseModel):
+    transaction_id: int
+
+@app.get("/api/exclusions")
+def exclusions(user=Depends(current_user), db=Depends(get_db)):
+    return [dict(r) for r in db.execute("SELECT e.*, a.name AS account_name FROM exclusion_rules e JOIN accounts a ON a.id=e.account_id WHERE e.user_id=? ORDER BY e.id DESC", (user["id"],))]
+
+@app.post("/api/exclusions")
+def add_exclusion(b: ExcludeIn, user=Depends(current_user), db=Depends(get_db)):
+    t = db.execute("SELECT * FROM transactions WHERE user_id=? AND id=? AND status!='staged'", (user["id"],b.transaction_id)).fetchone()
+    if not t or len(t["merchant_key"]) < 3:
+        raise ValueError("Choose a transaction with a distinct merchant before creating an exclusion.")
+    db.execute("INSERT OR IGNORE INTO exclusion_rules(user_id,account_id,merchant_key,direction,amount_minor) VALUES(?,?,?,?,?)", (user["id"],t["account_id"],t["merchant_key"],t["direction"],t["amount_minor"]))
+    db.execute("UPDATE transactions SET removed_at=datetime('now') WHERE id=?", (b.transaction_id,))
+    db.commit()
+    return {"ok": True}
+
+@app.delete("/api/exclusions/{rule_id}")
+def delete_exclusion(rule_id: int, user=Depends(current_user), db=Depends(get_db)):
+    if not db.execute("SELECT 1 FROM exclusion_rules WHERE id=? AND user_id=?", (rule_id,user["id"])).fetchone():
+        raise LookupError("Rule not found")
+    db.execute("DELETE FROM exclusion_rules WHERE id=? AND user_id=?", (rule_id,user["id"]))
+    db.commit()
+    return {"ok": True}
+
+@app.get("/api/classification-rules")
+def classification_rules(user=Depends(current_user), db=Depends(get_db)):
+    return [dict(r) for r in db.execute("SELECT r.*,c.name AS category_name FROM classification_rules r JOIN categories c ON c.id=r.category_id WHERE r.user_id=? ORDER BY r.id DESC", (user["id"],))]
+
+class RuleEdit(BaseModel):
+    category_id: int
+    type: str
+
+@app.patch("/api/classification-rules/{rule_id}")
+def edit_classification_rule(rule_id: int, b: RuleEdit, user=Depends(current_user), db=Depends(get_db)):
+    if b.type not in txns.TYPES or not txns.get_category(db,user["id"],b.category_id):
+        raise ValueError("Choose a valid type and category")
+    result=db.execute("UPDATE classification_rules SET category_id=?,type=? WHERE id=? AND user_id=?", (b.category_id,b.type,rule_id,user["id"]))
+    if not result.rowcount:
+        raise LookupError("Rule not found")
+    db.commit()
+    return {"ok":True}
+
+@app.delete("/api/classification-rules/{rule_id}")
+def delete_classification_rule(rule_id: int, user=Depends(current_user), db=Depends(get_db)):
+    result=db.execute("DELETE FROM classification_rules WHERE id=? AND user_id=?", (rule_id,user["id"]))
+    if not result.rowcount:
+        raise LookupError("Rule not found")
+    db.commit()
+    return {"ok":True}
+
+@app.post("/api/transactions/{txn_id}/restore")
+def restore_removed_transaction(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    result=db.execute("UPDATE transactions SET removed_at=NULL, excluded_rule_id=NULL WHERE id=? AND user_id=?", (txn_id,user["id"]))
+    if not result.rowcount:
+        raise LookupError("Transaction not found")
+    db.commit()
+    return {"ok":True}
+
+class ManualTxn(BaseModel):
+    account_id: int
+    date: str
+    amount_minor: int = Field(gt=0,lt=10**13)
+    direction: str
+    merchant: str = Field(min_length=1,max_length=80)
+    description: str = ""
+    category_id: int | None = None
+
+@app.post("/api/transactions")
+def add_manual_transaction(b: ManualTxn, user=Depends(current_user), db=Depends(get_db)):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}",b.date) or not parse_date(b.date):
+        raise ValueError("Invalid date")
+    if b.direction not in ("debit","credit"):
+        raise ValueError("Invalid direction")
+    if not db.execute("SELECT 1 FROM accounts WHERE id=? AND user_id=?", (b.account_id,user["id"])).fetchone():
+        raise LookupError("Account not found")
+    cat=txns.get_category(db,user["id"],b.category_id)
+    if b.category_id is not None and cat is None:
+        raise ValueError("Invalid category")
+    status="categorized" if cat else "pending"
+    ttype=txns.derive_type(cat["kind"]) if cat else ("income" if b.direction=="credit" else "expense")
+    cur=db.execute("INSERT INTO transactions(user_id,account_id,date,amount_minor,direction,type,merchant,merchant_key,description,category_id,status,reviewed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (user["id"],b.account_id,b.date,b.amount_minor,b.direction,ttype,b.merchant,merchant_key(b.merchant),b.description,b.category_id,status,txns.now() if cat else None))
+    db.commit()
+    return txns.get_txn(db,user["id"],cur.lastrowid)
 
 # ================================================================ dashboard, budgets, goals, recurring
 
