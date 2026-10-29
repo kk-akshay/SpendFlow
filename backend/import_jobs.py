@@ -117,7 +117,13 @@ def _process(job_id, uid, payload, password):
                     continue
                 aid = _resolve_account(db, uid, payload["account_id"], payload["new_name"],
                                        payload["new_type"], parsed, cache)
-                stored_path = storage.persist(path, uid)
+                # Local storage must remain available after the temporary job dir is deleted.
+                persistent_file = path
+                if not storage.cloud_enabled():
+                    import shutil
+                    persistent_file = UPLOAD_DIR / str(uid) / (uuid.uuid4().hex + path.suffix)
+                    shutil.copyfile(path, persistent_file)
+                stored_path = storage.persist(persistent_file, uid)
                 sid = importing.create_statement(db, uid, aid, name, stored_path, item["sha256"],
                                                  MIME[item["kind"]], parsed)
                 db.commit()
