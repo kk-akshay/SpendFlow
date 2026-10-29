@@ -21,7 +21,10 @@ old = "OriginalPassword123!"
 new = "UpdatedPassword456!"
 changed = "AnotherPassword789!"
 
+assert client.get("/api/auth/session").json() == {"authenticated":False,"user":None}
 assert client.post("/api/auth/register",json={"email":email,"password":old}).status_code == 200
+assert client.get("/api/auth/session").json()["user"]["email"] == email
+assert client.post("/api/auth/register",json={"email":email,"password":old}).status_code == 409
 db = connect()
 try:
     user_id = db.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()[0]
@@ -51,6 +54,7 @@ assert client.post("/api/auth/reset-password",json={"token":"invalid","new_passw
 assert client.post("/api/auth/reset-password",json={"token":token,"new_password":new}).status_code == 200
 assert client.post("/api/auth/reset-password",json={"token":token,"new_password":changed}).status_code == 400
 assert client.get("/api/auth/me").status_code == 401
+assert client.get("/api/auth/session").json()["authenticated"] is False
 assert client.post("/api/auth/login",json={"email":email,"password":old}).status_code == 401
 assert client.post("/api/auth/login",json={"email":email,"password":new}).status_code == 200
 assert client.post("/api/auth/change-password",json={"current_password":"wrong","new_password":changed}).status_code == 401
