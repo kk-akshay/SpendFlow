@@ -176,6 +176,8 @@ def apply_category(db, user_id: int, txn_id: int, p: dict) -> dict:
     t = db.execute("SELECT * FROM transactions WHERE id=? AND user_id=? AND status!='staged'", (txn_id, user_id)).fetchone()
     if not t:
         raise LookupError("Transaction not found")
+    if db.execute("SELECT 1 FROM transaction_group_members WHERE txn_id=?", (txn_id,)).fetchone():
+        raise ValueError("Unlink this transaction from its group before changing its category.")
     snaps = [snapshot(db, txn_id)]
 
     splits = p.get("splits") or None
