@@ -4,13 +4,14 @@ const KEYS = '1234567890qwertyuiopasdfghjklzxcvbnm'.split('');
 
 routes.review = async (main) => {
   let scope = 'pending';
+  let order = localStorage.getItem('tally-review-order') === 'asc' ? 'asc' : 'desc';
   let state = null;          // {item, progress}
-  let opts = { note: '', recurring: false, similar: true, showNote: false };
+  let opts = { note: '', recurring: false, similar: false, remember: false, showNote: false };
   let lastUndo = null;
   let busy = false;
   let typeOverride = null;
 
-  const load = async () => { state = await api('/review/next?scope=' + scope); draw(); refreshBadge(); };
+  const load = async () => { state = await api('/review/next?scope=' + scope + '&order=' + order); draw(); refreshBadge(); };
 
   const shortcut = (i) => KEYS[i] || '';
   const orderedCats = () => S.cats.filter((c) => c.kind !== 'transfer' || true);
@@ -30,7 +31,7 @@ routes.review = async (main) => {
     const type = typeOverride || t.type;
     const sgCat = sg && cat(sg.category_id);
     const inflow = t.direction === 'credit';
-    main.innerHTML = `<div class="review">${progressHtml(p)}
+    main.innerHTML = `<div class="review"><div class="row" style="justify-content:flex-end;margin-bottom:12px"><label class="small">Review order <select id="review-order" style="width:auto"><option value="desc" ${order === 'desc' ? 'selected' : ''}>Newest first</option><option value="asc" ${order === 'asc' ? 'selected' : ''}>Oldest first</option></select></label></div>${progressHtml(p)}
       <div class="stage" id="stage"><div class="swipe-hint r" id="hint-r">${sgCat ? 'ACCEPT' : ''}</div><div class="swipe-hint l" id="hint-l">SKIP</div>
         <article class="tcard enter" id="card" aria-label="Transaction to categorise">
           <div class="kind"><span class="pill ${type === 'transfer' ? '' : inflow ? 'good' : ''}">${typeLabel[type]}</span>
@@ -53,9 +54,10 @@ routes.review = async (main) => {
         <button class="btn sm ${opts.showNote || opts.note ? 'primary' : ''}" id="b-note">${opts.note ? 'Note added' : 'Add note'} <kbd>n</kbd></button>
         <button class="btn sm" id="b-split">Split <kbd>/</kbd></button>
         <button class="btn sm ${opts.recurring ? 'primary' : ''}" id="b-rec">${opts.recurring ? 'Recurring ✓' : 'Recurring'} <kbd>.</kbd></button>
-        <button class="btn sm" id="b-skip">Skip <kbd>␣</kbd></button>
+        <button class="btn sm" id="b-skip">Skip for now <kbd>␣</kbd></button>
         <button class="btn sm" id="b-undo" ${lastUndo ? '' : 'disabled'}>Undo <kbd>⌫</kbd></button></div>
       ${opts.showNote ? `<div class="field" style="margin-top:14px"><label for="note" class="sr">Note</label><input id="note" placeholder="Add a note (optional)" maxlength="500" value="${esc(opts.note)}"></div>` : ''}
+      <label class="check small" style="justify-content:center"><input type="checkbox" id="remember" ${opts.remember ? 'checked' : ''}> Remember this merchant/account pattern for future imports</label>
       ${item.similar_count > 0 ? `<label class="check small" style="justify-content:center;margin-top:8px"><input type="checkbox" id="sim" ${opts.similar ? 'checked' : ''}> Also apply to ${item.similar_count} other “${esc(t.merchant)}” transaction${item.similar_count > 1 ? 's' : ''} waiting for review</label>` : ''}
       <div class="keys"><kbd>Enter</kbd> accept suggestion · <kbd>→</kbd> accept / <kbd>←</kbd> skip · category keys shown on buttons</div></div>`;
     wire(item);
@@ -85,16 +87,16 @@ routes.review = async (main) => {
     const card = $('#card');
     card && card.classList.add('out-r');
     try {
-      const body = { ...payload, note: opts.note || undefined, recurring: opts.recurring || undefined, apply_similar: opts.similar && state.item.similar_count > 0 && !!payload.category_id };
+      const body = { ...payload, note: opts.note || undefined, recurring: opts.recurring || undefined, remember: opts.remember, apply_similar: opts.similar && state.item.similar_count > 0 && !!payload.category_id };
       if (typeOverride) body.type = typeOverride;
-      const r = await api(`/review/${t.id}/categorize?scope=${scope}`, { method: 'POST', body });
+      const r = await api(`/review/${t.id}/categorize?scope=${scope}&order=${order}`, { method: 'POST', body });
       lastUndo = r.undo; state = { item: r.item, progress: r.progress }; resetOpts();
       if (r.applied_similar) toast(`Applied to ${r.applied_similar} similar transaction${r.applied_similar > 1 ? 's' : ''} too`, { action: 'Undo', onAction: undo });
       setTimeout(draw, 160);
     } catch (e) { card && card.classList.remove('out-r'); fail(e); }
     busy = false;
   }
-  function resetOpts() { opts = { note: '', recurring: false, similar: opts.similar, showNote: false }; typeOverride = null; }
+  function resetOpts() { opts = { note: '', recurring: false, similar: opts.similar, remember: false, showNote: false }; typeOverride = null; }
 
   async function skip() {
     if (busy || !state.item) return;
@@ -127,6 +129,8 @@ routes.review = async (main) => {
     $('#b-rec').onclick = () => { opts.recurring = !opts.recurring; draw(); };
     $('#b-note').onclick = () => { opts.showNote = !opts.showNote; draw(); if (opts.showNote) $('#note').focus(); };
     $('#note') && ($('#note').oninput = (e) => { opts.note = e.target.value; });
+    $('#review-order') && ($('#review-order').onchange = (e) => { order=e.target.value; localStorage.setItem('tally-review-order',order); load(); });
+    $('#remember') && ($('#remember').onchange = (e) => { opts.remember = e.target.checked; });
     $('#sim') && ($('#sim').onchange = (e) => { opts.similar = e.target.checked; });
     $('#b-split').onclick = () => splitDialog(item.txn);
     $('#newcat').onclick = newCategoryDialog;

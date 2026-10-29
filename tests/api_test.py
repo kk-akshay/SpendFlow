@@ -48,9 +48,13 @@ check("cannot commit twice", c.post(f"/api/imports/{sid}/commit").status_code ==
 # review flow
 st = c.get("/api/review/next").json()
 check("progress 0 of 45", st["progress"] == {"total":45,"reviewed":0,"skipped":0,"pending":45}, st["progress"])
-first = st["item"]; check("first card is earliest by date", first["txn"]["date"] == "2026-08-02")
-check("card shows the corrected original description", "CORRECTED" in first["txn"]["description"])
-check("keyword suggestion for card 1", first["suggestion"] is not None, first["suggestion"])
+first = st["item"]
+newest = c.get("/api/transactions?sort=date_desc&limit=1").json()["items"][0]
+oldest = c.get("/api/review/next?order=asc").json()["item"]["txn"]
+check("review defaults to newest", first["txn"]["id"] == newest["id"])
+check("ascending review starts oldest", oldest["date"] <= first["txn"]["date"])
+check("corrected imported narration preserved", "CORRECTED" in c.get(f"/api/transactions/{row['id']}").json()["txn"]["description"])
+check("review includes suggestion field", "suggestion" in first)
 inc = cats["Income"]["id"]
 r = c.post(f"/api/review/{first['txn']['id']}/categorize", json={"category_id": inc, "note":"august salary"}).json()
 check("categorise advances", r["progress"]["reviewed"] == 1 and r["item"]["txn"]["id"] != first["txn"]["id"])

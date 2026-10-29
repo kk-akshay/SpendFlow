@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analytics, importing, parse_llm, txns
+from . import analytics, importing, ledger, parse_llm, txns
 from .auth import (EMAIL_RE, clear_throttle, current_user, end_session, hash_password, require_csrf,
                    start_session, throttle, verify_password)
 from .config import (CURRENCY, FRONTEND_DIR, LOCALE, MAX_FILES_PER_IMPORT, MAX_UPLOAD_BYTES, UPLOAD_DIR)
@@ -137,6 +137,9 @@ def wipe_data(b: Confirm, user=Depends(current_user), db=Depends(get_db)):
     db.execute("DELETE FROM transactions WHERE user_id=?", (uid,))
     db.execute("DELETE FROM statements WHERE user_id=?", (uid,))
     db.execute("DELETE FROM merchant_rules WHERE user_id=?", (uid,))
+    db.execute("DELETE FROM import_exclusions WHERE user_id=?", (uid,))
+    db.execute("DELETE FROM classification_rules WHERE user_id=?", (uid,))
+    db.execute("DELETE FROM transaction_groups WHERE user_id=?", (uid,))
     db.commit()
     _delete_files(uid)
     return {"ok": True}
@@ -555,30 +558,31 @@ class CategorizeIn(BaseModel):
     recurring_freq: str | None = None
     type: str | None = None
     apply_similar: bool = False
+    remember: bool = False
     splits: list[SplitIn] | None = None
 
 
-def _review_state(db, uid: int, scope: str) -> dict:
-    return {"item": txns.next_item(db, uid, scope), "progress": txns.progress(db, uid), "scope": scope}
+def _review_state(db, uid: int, scope: str, order: str = 'desc') -> dict:
+    return {"item": txns.next_item(db, uid, scope, order), "progress": txns.progress(db, uid), "scope": scope}
 
 
 @app.get("/api/review/next")
-def review_next(scope: str = "pending", user=Depends(current_user), db=Depends(get_db)):
-    return _review_state(db, user["id"], "skipped" if scope == "skipped" else "pending")
+def review_next(scope: str = "pending", order: str = "desc", user=Depends(current_user), db=Depends(get_db)):
+    return _review_state(db, user["id"], "skipped" if scope == "skipped" else "pending", order)
 
 
 @app.post("/api/review/{txn_id}/categorize")
-def review_categorize(txn_id: int, b: CategorizeIn, scope: str = "pending", user=Depends(current_user), db=Depends(get_db)):
+def review_categorize(txn_id: int, b: CategorizeIn, scope: str = "pending", order: str = "desc", user=Depends(current_user), db=Depends(get_db)):
     res = txns.apply_category(db, user["id"], txn_id, b.model_dump(exclude_unset=True))
     scope = "skipped" if scope == "skipped" else "pending"
-    return {**{k: res[k] for k in ("undo", "applied_similar", "partner_confirmed")}, **_review_state(db, user["id"], scope)}
+    return {**{k: res[k] for k in ("undo", "applied_similar", "partner_confirmed")}, **_review_state(db, user["id"], scope, order)}
 
 
 @app.post("/api/review/{txn_id}/skip")
-def review_skip(txn_id: int, scope: str = "pending", user=Depends(current_user), db=Depends(get_db)):
+def review_skip(txn_id: int, scope: str = "pending", order: str = "desc", user=Depends(current_user), db=Depends(get_db)):
     res = txns.skip_txn(db, user["id"], txn_id)
     scope = "skipped" if scope == "skipped" else "pending"
-    return {"undo": res["undo"], **_review_state(db, user["id"], scope)}
+    return {"undo": res["undo"], **_review_state(db, user["id"], scope, order)}
 
 
 class RestoreIn(BaseModel):
@@ -586,10 +590,10 @@ class RestoreIn(BaseModel):
 
 
 @app.post("/api/review/restore")
-def review_restore(b: RestoreIn, scope: str = "pending", user=Depends(current_user), db=Depends(get_db)):
+def review_restore(b: RestoreIn, scope: str = "pending", order: str = "desc", user=Depends(current_user), db=Depends(get_db)):
     n = txns.restore(db, user["id"], b.undo)
     db.commit()
-    state = _review_state(db, user["id"], "skipped" if scope == "skipped" else "pending")
+    state = _review_state(db, user["id"], "skipped" if scope == "skipped" else "pending", order)
     first = b.undo[0].get("id") if b.undo else None
     if isinstance(first, int):
         item = txns.item_for(db, user["id"], first)
@@ -629,6 +633,7 @@ class TxnEdit(BaseModel):
     amount_minor: int | None = Field(default=None, gt=0, lt=10**13)
     direction: str | None = None
     send_to_review: bool = False
+    remember: bool = False
 
 
 @app.patch("/api/transactions/{txn_id}")
@@ -644,6 +649,12 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         undo = txns.bulk(db, uid, [txn_id], "pending", {})["undo"]
         return {"txn": txns.get_txn(db, uid, txn_id), "undo": undo}
 
+    if db.execute("SELECT 1 FROM transaction_group_members WHERE txn_id=?", (txn_id,)).fetchone() and (
+        ("category_id" in body and body["category_id"] != row["category_id"]) or body.get("splits") or
+        ("type" in body and body["type"] != row["type"]) or
+        ("direction" in body and body["direction"] != row["direction"]) or
+        ("amount_minor" in body and body["amount_minor"] != row["amount_minor"])):
+        raise HTTPException(400, "Unlink this transaction from its group before changing its accounting details.")
     # field corrections
     vals = {}
     if "merchant" in body and body["merchant"] is not None:
@@ -688,6 +699,10 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
             if not undo:
                 undo.append(txns.snapshot(db, txn_id))
             db.execute(f"UPDATE transactions SET {', '.join(sets)} WHERE id=?", [*args, txn_id])
+    if body.get("remember") and row["merchant_key"]:
+        fresh = db.execute("SELECT * FROM transactions WHERE id=?", (txn_id,)).fetchone()
+        if fresh["category_id"]:
+            ledger.remember(db, uid, fresh, fresh["category_id"], fresh["type"])
     db.commit()
     return {"txn": txns.get_txn(db, uid, txn_id), "undo": undo}
 
@@ -746,6 +761,112 @@ def export_csv(user=Depends(current_user), db=Depends(get_db)):
 
     return StreamingResponse(gen(), media_type="text/csv",
                              headers={"Content-Disposition": 'attachment; filename="tally-transactions.csv"'})
+
+
+
+# ================================================================ persistent rules and linked cash flows
+
+class ExclusionIn(BaseModel):
+    confirmed: bool = False
+
+@app.post("/api/transactions/{txn_id}/exclude")
+def exclude_transaction(txn_id: int, b: ExclusionIn, user=Depends(current_user), db=Depends(get_db)):
+    if not b.confirmed:
+        raise HTTPException(400, "Confirm the exclusion rule before saving.")
+    ledger.save_exclusion(db, user["id"], txn_id)
+    db.execute("UPDATE transactions SET transfer_pair_id=NULL WHERE user_id=? AND transfer_pair_id=?", (user["id"], txn_id))
+    db.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (txn_id, user["id"]))
+    db.commit()
+    return {"ok": True}
+
+@app.get("/api/rules")
+def list_rules(user=Depends(current_user), db=Depends(get_db)):
+    return ledger.rules(db, user["id"])
+
+@app.delete("/api/rules/{kind}/{rule_id}")
+def delete_rule(kind: str, rule_id: int, user=Depends(current_user), db=Depends(get_db)):
+    table = {"exclusion":"import_exclusions","classification":"classification_rules"}.get(kind)
+    if not table:
+        raise HTTPException(400, "Unknown rule kind.")
+    changed = db.execute(f"DELETE FROM {table} WHERE id=? AND user_id=?", (rule_id,user["id"])).rowcount
+    db.commit()
+    if not changed:
+        raise LookupError("Rule not found.")
+    return {"ok": True}
+
+class GroupIn(BaseModel):
+    name: str = Field(min_length=1,max_length=100)
+    kind: str
+    ids: list[int] = Field(min_length=1,max_length=100)
+
+class MemberIn(BaseModel):
+    ids: list[int] = Field(min_length=1,max_length=100)
+
+@app.get("/api/groups")
+def list_groups(user=Depends(current_user), db=Depends(get_db)):
+    return ledger.list_groups(db, user["id"])
+
+@app.get("/api/transactions/{txn_id}/matches")
+def transaction_matches(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    return ledger.suggestions(db, user["id"], txn_id)
+
+@app.post("/api/groups")
+def create_group(b: GroupIn, user=Depends(current_user), db=Depends(get_db)):
+    if b.kind not in ("loan","repayment","pass_through","transfer"):
+        raise HTTPException(400, "Unknown group kind.")
+    cur = db.execute("INSERT INTO transaction_groups(user_id,name,kind) VALUES(?,?,?)",
+                     (user["id"],b.name.strip(),b.kind))
+    ledger.add_members(db,user["id"],cur.lastrowid,b.ids)
+    db.commit()
+    return {"id":cur.lastrowid}
+
+@app.post("/api/groups/{group_id}/members")
+def link_group(group_id: int, b: MemberIn, user=Depends(current_user), db=Depends(get_db)):
+    changed=ledger.add_members(db,user["id"],group_id,b.ids)
+    db.commit()
+    return {"changed":changed}
+
+@app.delete("/api/groups/{group_id}/members/{txn_id}")
+def unlink_group(group_id: int, txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    ledger.unlink(db,user["id"],group_id,txn_id)
+    db.commit()
+    return {"ok":True}
+
+@app.delete("/api/groups/{group_id}")
+def remove_group(group_id: int, user=Depends(current_user), db=Depends(get_db)):
+    if not db.execute("SELECT 1 FROM transaction_groups WHERE id=? AND user_id=?",(group_id,user["id"])).fetchone():
+        raise LookupError("Group not found.")
+    ids=[r["txn_id"] for r in db.execute("SELECT txn_id FROM transaction_group_members WHERE group_id=?",(group_id,))]
+    for tid in ids:
+        ledger.unlink(db,user["id"],group_id,tid)
+    db.execute("DELETE FROM transaction_groups WHERE id=?",(group_id,))
+    db.commit()
+    return {"ok":True}
+
+class ManualTxn(BaseModel):
+    account_id: int
+    date: str
+    amount_minor: int = Field(gt=0,lt=10**13)
+    direction: str
+    description: str = Field(min_length=1,max_length=500)
+
+@app.post("/api/transactions")
+def add_transaction(b: ManualTxn, user=Depends(current_user), db=Depends(get_db)):
+    uid=user["id"]
+    _own_account(db,uid,b.account_id)
+    try:
+        iso=date.fromisoformat(b.date).isoformat()
+    except ValueError:
+        raise HTTPException(400,"Invalid date.")
+    if b.direction not in ("debit","credit"):
+        raise HTTPException(400,"Invalid direction.")
+    merchant=extract_merchant(b.description)
+    cur=db.execute("INSERT INTO transactions(user_id,account_id,date,amount_minor,direction,type,description,merchant,merchant_key,status,flags) "
+        "VALUES(?,?,?,?,?,?,?,?,?,'pending','[]')",
+        (uid,b.account_id,iso,b.amount_minor,b.direction,"income" if b.direction=="credit" else "expense",
+         b.description,merchant,merchant_key(merchant)))
+    db.commit()
+    return {"txn":txns.get_txn(db,uid,cur.lastrowid)}
 
 
 # ================================================================ dashboard, budgets, goals, recurring

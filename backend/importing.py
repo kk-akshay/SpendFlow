@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from .merchants import SELF_TRANSFER, extract_merchant, merchant_key
 from .statement_parser import ParseResult
 from .txns import now
+from . import ledger
 
 STAGED_OR_LIVE = "('pending','categorized','skipped','staged')"
 
@@ -153,6 +154,9 @@ def commit_statement(db, user_id: int, statement_id: int) -> dict:
     if not st:
         raise LookupError("Statement not found, or it was already confirmed.")
     mark_duplicates(db, user_id, statement_id)  # re-check against anything confirmed since upload
+    excluded_ids = [r["id"] for r in db.execute("SELECT * FROM transactions WHERE statement_id=? AND status='staged'", (statement_id,)) if ledger.matching_exclusion(db, r)]
+    for excluded_id in excluded_ids:
+        db.execute("DELETE FROM transactions WHERE id=?", (excluded_id,))
     dropped = db.execute("DELETE FROM transactions WHERE statement_id=? AND status='staged' AND dup_status='exact'", (statement_id,)).rowcount
     # a suspected duplicate whose original has since disappeared is no longer a duplicate
     db.execute(
@@ -161,11 +165,12 @@ def commit_statement(db, user_id: int, statement_id: int) -> dict:
     ids = [r["id"] for r in db.execute("SELECT id FROM transactions WHERE statement_id=? AND status='staged'", (statement_id,))]
     db.execute("UPDATE transactions SET status='pending' WHERE statement_id=? AND status='staged'", (statement_id,))
     transfers = detect_transfers(db, user_id, ids)
+    classified = ledger.classify_import(db, user_id, ids)
     suspected = db.execute("SELECT COUNT(*) FROM transactions WHERE statement_id=? AND dup_status='suspected'", (statement_id,)).fetchone()[0]
     db.execute("UPDATE statements SET status='imported' WHERE id=?", (statement_id,))
     refresh_statement_meta(db, statement_id)
     db.commit()
-    return {"imported": len(ids), "already_imported": dropped, "suspected_duplicates": suspected, "transfers_detected": transfers}
+    return {"imported": len(ids), "already_imported": dropped, "excluded":len(excluded_ids), "auto_classified": classified, "suspected_duplicates": suspected, "transfers_detected": transfers}
 
 
 def duplicate_pairs(db, user_id: int) -> list[dict]:
