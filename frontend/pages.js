@@ -112,7 +112,16 @@ async function openTxn(id, done) {
   $('[data-x]', m.el).onclick = () => m.close();
   const patch = async (body, msg) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
-  $('#tdel', m.el).onclick = async () => { m.close(); if (await confirmBox({ title: 'Delete this transaction?', body: 'This hides only the selected transaction from totals and history, preserving its record.', ok: 'Delete', danger: true })) { try { await api('/transactions/' + id, { method: 'DELETE' }); toast('Transaction deleted'); refreshBadge(); done && done(); } catch (e) { fail(e); } } };
+  $('#tdel', m.el).onclick = async () => {
+    m.close();
+    const x = modal('<h2>Remove transaction</h2><p class="muted small">Choose whether to remove only this transaction or also remember an exact rule for future imports.</p><div class="foot" style="flex-direction:column;align-items:stretch"><button class="btn danger" id="remove-once">Remove only this transaction</button><button class="btn" id="exclude-future">Exclude matching future imports</button><button class="btn ghost" id="cancel-remove">Cancel</button></div>');
+    $('#cancel-remove', x.el).onclick = () => x.close();
+    $('#remove-once', x.el).onclick = async () => { try { await api('/transactions/' + id, { method:'DELETE' }); x.close(); toast('Transaction removed'); refreshBadge(); done && done(); } catch(e) { fail(e); } };
+    $('#exclude-future', x.el).onclick = async () => {
+      if (!await confirmBox({ title:'Save an exclusion rule?', body:'This will exclude future transactions matching the same account, merchant, amount and direction. Check that repeated genuine payments should also be excluded.', ok:'Save rule', danger:true })) return;
+      try { await api('/exclusions',{method:'POST',body:{transaction_id:id}}); x.close(); toast('Exclusion saved'); refreshBadge(); done && done(); } catch(e) { fail(e); }
+    };
+  };
   const exclude = document.createElement('button'); exclude.className='btn sm danger'; exclude.textContent='Delete and exclude future matches';
   $('#tdel',m.el).after(exclude);
   exclude.onclick=async()=>{if(!await confirmBox({title:'Delete and permanently exclude matching imports?',body:'Matches require the same account, merchant, description, direction and amount. Repeated genuine payments could also match. Remove the rule later in Linked money.',ok:'Confirm exclusion',danger:true}))return;
@@ -159,7 +168,7 @@ routes.transactions = async (main, [pre]) => {
   else if (pre && pre.startsWith('cat-')) { const [, c, mo] = pre.split('-').concat([]); f.category = c === 'uncategorized' ? 'uncategorized' : c; if (mo) { const y = pre.split('-')[2], mm = pre.split('-')[3]; f.from = `${y}-${mm}-01`; f.to = `${y}-${mm}-31`; } }
   let selected = new Set(), data = null, timer;
   main.innerHTML = `<div class="head"><div><h1>${f.dup ? 'Possible duplicates' : 'Transactions'}</h1><p class="sub" id="sub"></p></div><div class="row"><a class="btn sm" href="/api/export.csv" download>Export CSV</a><button class="btn primary sm" id="imp">Import</button></div></div>
-    <div id="dupbox"></div>
+    <div id="dupbox"></div><div class="row" style="margin-bottom:12px"><button class="btn sm" id="add-manual">+ Add transaction</button><a class="btn sm" href="#/calendar">Calendar</a><button class="btn sm" id="show-removed">Removed transactions</button></div>
     <div class="card flat" style="margin-bottom:16px"><div class="grid g3" style="margin-bottom:10px"><input id="q" type="search" placeholder="Search merchant, note, amount…" aria-label="Search" value="${esc(f.q)}">
       <select id="fcat" aria-label="Category"><option value="">All categories</option><option value="uncategorized">Needs a category</option>${S.cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
       <select id="facc" aria-label="Account"><option value="">All accounts</option>${S.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div>
@@ -172,6 +181,8 @@ routes.transactions = async (main, [pre]) => {
     <div id="list"></div><div id="selbar"></div>`;
   $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
   $('#imp').onclick = () => openImport();
+  $('#add-manual').onclick = () => manualTxn(() => load());
+  $('#show-removed').onclick = () => { f.include_removed = f.include_removed ? '' : 1; $('#show-removed').textContent = f.include_removed ? 'Hide removed' : 'Removed transactions'; load(); };
   const bind = { q: 'q', category: 'fcat', account: 'facc', type: 'ftype', sort: 'fsort', from: 'ffrom', to: 'fto', min: 'fmin', max: 'fmax' };
   Object.entries(bind).forEach(([k, id]) => { $('#' + id).oninput = (e) => { f[k] = e.target.value; f.page = 1; clearTimeout(timer); timer = setTimeout(load, k === 'q' || k === 'min' || k === 'max' ? 300 : 0); }; });
   $('#frec').onchange = (e) => { f.recurring = e.target.checked ? 1 : ''; f.page = 1; load(); };
@@ -187,7 +198,7 @@ routes.transactions = async (main, [pre]) => {
     $('#sub').textContent = `${data.total} transaction${data.total === 1 ? '' : 's'} · in ${money(data.money_in)} · out ${money(data.money_out)}`;
     if (f.dup) loadDups();
     if (!data.items.length) { $('#list').innerHTML = `<div class="empty card"><div class="big">🔍</div><h2>${f.dup ? 'No duplicates to check' : 'Nothing matches'}</h2><p>${f.dup ? 'Nice and tidy.' : 'Try clearing a filter, or import a statement.'}</p></div>`; return; }
-    $('#list').innerHTML = `<div class="card"><div class="list">${data.items.map((t) => `<div class="row" style="flex-wrap:nowrap"><input type="checkbox" data-sel="${t.id}" style="width:18px;min-height:0;flex:none" aria-label="Select" ${selected.has(t.id) ? 'checked' : ''}><div style="flex:1;min-width:0">${txnRow(t)}</div></div>`).join('')}</div>
+    $('#list').innerHTML = `<div class="card"><div class="list">${data.items.map((t) => `<div class="row" style="flex-wrap:nowrap">${t.removed_at ? `<button class="btn sm" data-restore="${t.id}">Restore</button>` : ''}<input type="checkbox" data-sel="${t.id}" style="width:18px;min-height:0;flex:none" aria-label="Select" ${selected.has(t.id) ? 'checked' : ''}><div style="flex:1;min-width:0">${txnRow(t)}</div></div>`).join('')}</div>
       ${data.pages > 1 ? `<div class="row" style="justify-content:center;margin-top:14px"><button class="btn sm" id="pp" ${f.page <= 1 ? 'disabled' : ''}>Previous</button><span class="small muted">Page ${data.page} of ${data.pages}</span><button class="btn sm" id="np" ${f.page >= data.pages ? 'disabled' : ''}>Next</button></div>` : ''}</div>`;
     $('#pp') && ($('#pp').onclick = () => { f.page--; load(); }); $('#np') && ($('#np').onclick = () => { f.page++; load(); });
     selbar();
@@ -211,6 +222,8 @@ routes.transactions = async (main, [pre]) => {
     try { const r = await api('/transactions/bulk', { method: 'POST', body: { ids: [...selected], action, ...extra } }); selected.clear(); refreshBadge(); toast(`${r.changed} updated`, r.undo.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); refreshBadge(); load(); } } : {}); load(); } catch (e) { fail(e); }
   }
   main.onclick = (e) => {
+    const restore = e.target.closest('[data-restore]');
+    if (restore) { api('/transactions/' + restore.dataset.restore + '/restore', { method: 'POST' }).then(load).catch(fail); return; }
     const cb = e.target.closest('[data-sel]');
     if (cb) { +cb.dataset.sel && (cb.checked ? selected.add(+cb.dataset.sel) : selected.delete(+cb.dataset.sel)); selbar(); return; }
     const keep = e.target.closest('[data-keep]'), drop = e.target.closest('[data-drop]');
@@ -357,3 +370,36 @@ async function linkDialog(groupId,done){
   }catch(e){$('#lerror',m.el).textContent=e.message;}};
   try{await load();}catch(e){fail(e);}
 }
+
+/* ---------- Calendar and manual entries ---------- */
+async function manualTxn(done, dateValue = todayIso()) {
+  const m = modal(`<h2>Add a transaction</h2><div class="field"><label>Date</label><input type="date" id="manual-date" value="${esc(dateValue)}"></div>
+    <div class="field"><label>Account</label><select id="manual-account">${S.accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div>
+    <div class="grid g2"><div class="field"><label>Amount</label><input id="manual-amount" inputmode="decimal" placeholder="150.00"></div>
+    <div class="field"><label>Direction</label><select id="manual-direction"><option value="debit">Money out</option><option value="credit">Money in</option></select></div></div>
+    <div class="field"><label>Merchant</label><input id="manual-merchant" maxlength="80"></div>
+    <div class="field"><label>Category (optional)</label><select id="manual-category"><option value="">Review later</option>${S.cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
+    <div id="manual-error"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="manual-save">Save</button></div>`);
+  $('[data-x]',m.el).onclick = () => m.close();
+  $('#manual-save',m.el).onclick = async () => {
+    try {
+      await api('/transactions',{method:'POST',body:{date:$('#manual-date',m.el).value,account_id:+$('#manual-account',m.el).value,amount_minor:toMinor($('#manual-amount',m.el).value),direction:$('#manual-direction',m.el).value,merchant:$('#manual-merchant',m.el).value,category_id:+$('#manual-category',m.el).value||null}});
+      m.close(); toast('Transaction added'); if (done) done();
+    } catch(e) { $('#manual-error',m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; }
+  };
+}
+routes.calendar = async (main) => {
+  let selected = sessionStorage.getItem('spendflow-calendar-date') || todayIso();
+  main.innerHTML = `<div class="head"><div><h1>Calendar</h1><p class="sub">Transactions by day</p></div><div class="row"><button class="btn" id="prev-day">←</button><input type="date" id="calendar-date" value="${esc(selected)}" aria-label="Selected date"><button class="btn" id="next-day">→</button><button class="btn primary" id="calendar-add">+ Add</button></div></div><div id="calendar-transactions"></div>`;
+  const step = n => { const d = new Date(selected+'T12:00:00'); d.setDate(d.getDate()+n); selected = [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-'); $('#calendar-date').value=selected; load(); };
+  $('#prev-day').onclick = () => step(-1); $('#next-day').onclick = () => step(1);
+  $('#calendar-date').onchange = e => { selected=e.target.value; load(); };
+  $('#calendar-add').onclick = () => manualTxn(load,selected);
+  async function load() {
+    sessionStorage.setItem('spendflow-calendar-date',selected);
+    const d=await api('/transactions?from='+selected+'&to='+selected+'&limit=200');
+    $('#calendar-transactions').innerHTML = `<div class="card"><h2>${fdate(selected)}</h2><p class="muted small">${d.total} transactions · In ${money(d.money_in)} · Out ${money(d.money_out)}</p><div class="list">${d.items.map(txnRow).join('')||'<p class="muted">No transactions for this day.</p>'}</div></div>`;
+  }
+  main.onclick=e=>{const t=e.target.closest('[data-txn]');if(t)openTxn(+t.dataset.txn,load);};
+  await load();
+};
