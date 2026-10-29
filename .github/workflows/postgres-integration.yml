@@ -1,0 +1,36 @@
+name: PostgreSQL integration checks
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "tests/postgres_integration_test.py"
+      - "requirements.txt"
+      - ".github/workflows/postgres-integration.yml"
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: spendflow_test
+          POSTGRES_PASSWORD: spendflow_test
+          POSTGRES_DB: spendflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U spendflow_test -d spendflow_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SPENDFLOW_TEST_DATABASE: "1"
+      DATABASE_URL: postgresql://spendflow_test:spendflow_test@127.0.0.1:5432/spendflow_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt httpx
+      - run: python tests/postgres_adapter_test.py
+      - run: python tests/postgres_integration_test.py
