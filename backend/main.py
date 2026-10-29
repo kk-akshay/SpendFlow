@@ -1081,6 +1081,59 @@ def stop_recurring(b: RecurringIn, user=Depends(current_user), db=Depends(get_db
     return {"ok": True}
 
 
+
+# ================================================================ linked non-personal flows
+
+class FlowIn(BaseModel):
+    kind: str
+    transaction_ids: list[int]
+
+@app.get("/api/flows/suggestions/{txn_id}")
+def flow_suggestions(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    t=db.execute("SELECT * FROM transactions WHERE id=? AND user_id=? AND status!='staged' AND removed_at IS NULL",(txn_id,user["id"])).fetchone()
+    if not t:
+        raise LookupError("Transaction not found")
+    from datetime import timedelta
+    start=(date.fromisoformat(t["date"])-timedelta(days=30)).isoformat()
+    end=(date.fromisoformat(t["date"])+timedelta(days=30)).isoformat()
+    rows=db.execute("SELECT t.id,t.date,t.amount_minor,t.direction,t.merchant,t.description,a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.user_id=? AND t.id!=? AND t.date BETWEEN ? AND ? AND t.direction!=? AND t.status!='staged' AND t.removed_at IS NULL AND NOT EXISTS(SELECT 1 FROM flow_group_members m WHERE m.txn_id=t.id) ORDER BY ABS(julianday(t.date)-julianday(?)), ABS(t.amount_minor-?) LIMIT 25",(user["id"],txn_id,start,end,t["direction"],t["date"],t["amount_minor"])).fetchall()
+    return [{"txn":dict(row),"same_amount":row["amount_minor"]==t["amount_minor"],"same_merchant":bool(t["merchant_key"] and merchant_key(row["merchant"])==t["merchant_key"])} for row in rows]
+
+@app.post("/api/flows")
+def create_flow(b: FlowIn, user=Depends(current_user), db=Depends(get_db)):
+    if b.kind not in ("pass_through","loan","repayment","reimbursement","temporary_transfer"):
+        raise ValueError("Unknown flow kind")
+    ids=list(dict.fromkeys(b.transaction_ids))
+    if not (2<=len(ids)<=50):
+        raise ValueError("Link between 2 and 50 transactions")
+    marks=",".join("?" * len(ids))
+    rows=db.execute(f"SELECT * FROM transactions WHERE user_id=? AND id IN ({marks}) AND status!='staged' AND removed_at IS NULL", [user["id"],*ids]).fetchall()
+    if len(rows)!=len(ids) or db.execute(f"SELECT 1 FROM flow_group_members WHERE txn_id IN ({marks}) LIMIT 1",ids).fetchone():
+        raise ValueError("Some transactions cannot be linked; check existing flow groups")
+    cur=db.execute("INSERT INTO flow_groups(user_id,kind) VALUES(?,?)",(user["id"],b.kind))
+    for row in rows:
+        db.execute("INSERT INTO flow_group_members(txn_id,group_id,original_type,original_category_id,original_status,original_reviewed_at,original_skipped_at) VALUES(?,?,?,?,?,?,?)",(row["id"],cur.lastrowid,row["type"],row["category_id"],row["status"],row["reviewed_at"],row["skipped_at"]))
+        db.execute("UPDATE transactions SET type='transfer',category_id=NULL,status='categorized',reviewed_at=datetime('now') WHERE id=?",(row["id"],))
+    db.commit()
+    return {"id":cur.lastrowid,"linked":len(rows)}
+
+@app.get("/api/flows")
+def list_flows(user=Depends(current_user), db=Depends(get_db)):
+    groups=db.execute("SELECT * FROM flow_groups WHERE user_id=? ORDER BY id DESC",(user["id"],)).fetchall()
+    return [{"id":g["id"],"kind":g["kind"],"transactions":[dict(r) for r in db.execute("SELECT t.id,t.date,t.direction,t.amount_minor,t.merchant FROM transactions t JOIN flow_group_members m ON m.txn_id=t.id WHERE m.group_id=? ORDER BY t.date,t.id",(g["id"],))]} for g in groups]
+
+@app.delete("/api/flows/{group_id}")
+def unlink_flow(group_id: int, user=Depends(current_user), db=Depends(get_db)):
+    if not db.execute("SELECT 1 FROM flow_groups WHERE id=? AND user_id=?",(group_id,user["id"])).fetchone():
+        raise LookupError("Flow not found")
+    rows=db.execute("SELECT m.* FROM flow_group_members m JOIN transactions t ON t.id=m.txn_id WHERE m.group_id=? AND t.user_id=?",(group_id,user["id"])).fetchall()
+    for row in rows:
+        db.execute("UPDATE transactions SET type=?,category_id=?,status=?,reviewed_at=?,skipped_at=? WHERE id=?",(row["original_type"],row["original_category_id"],row["original_status"],row["original_reviewed_at"],row["original_skipped_at"],row["txn_id"]))
+    db.execute("DELETE FROM flow_group_members WHERE group_id=?",(group_id,))
+    db.execute("DELETE FROM flow_groups WHERE id=? AND user_id=?",(group_id,user["id"]))
+    db.commit()
+    return {"ok":True}
+
 # ================================================================ static frontend
 
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
