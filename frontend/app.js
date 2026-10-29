@@ -37,7 +37,7 @@ const fmonth = (ym, long = true) => { const [y, m] = ym.split('-'); return new D
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 const typeLabel = { income: 'Income', expense: 'Expense', transfer: 'Transfer' };
 const cat = (id) => S.cats.find((c) => c.id === id);
-const catDot = (c) => `<span class="dot" style="background:${esc(c?.color || c?.category_color || '#9CA3AF')}"></span>`;
+const catDot = (c) => `<span class="dot" style="background:var(--shade-3)"></span>`;
 
 /* ---------- toast / modal ---------- */
 function toast(msg, { err = false, action, onAction, ms = 5000 } = {}) {
@@ -70,7 +70,7 @@ function confirmBox({ title, body, ok = 'Confirm', danger = false, typed }) {
     const m = modal(`<h2>${esc(title)}</h2><p class="muted">${body}</p>
       ${typed ? `<div class="field" style="margin-top:14px"><label>Type ${esc(typed)} to confirm</label><input id="cf" autocomplete="off"></div>` : ''}
       <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn ${danger ? 'primary danger' : 'primary'}" data-ok ${typed ? 'disabled' : ''}>${esc(ok)}</button></div>`, { onClose: () => resolve(false) });
-    if (danger) $('[data-ok]', m.el).style.background = 'var(--bad)';
+    if (danger) $('[data-ok]', m.el).classList.add('danger');
     if (typed) $('#cf', m.el).oninput = (e) => { $('[data-ok]', m.el).disabled = e.target.value !== typed; };
     $('[data-x]', m.el).onclick = () => m.close();
     $('[data-ok]', m.el).onclick = () => { resolve(true); m.close(); };

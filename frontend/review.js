@@ -37,18 +37,18 @@ routes.review = async (main) => {
           <div class="kind"><span class="pill ${type === 'transfer' ? '' : inflow ? 'good' : ''}">${typeLabel[type]}</span>
             <button class="btn sm ghost" id="type-btn" title="Change type">Change type</button></div>
           <div class="merchant">${esc(t.merchant || 'Unknown merchant')}</div>
-          <div class="amount num ${inflow ? 'pos' : ''}">${inflow ? '+' : ''}${money(t.amount_minor)}</div>
+          <div class="amount num ${inflow ? 'amount-in' : 'amount-out'}">${inflow ? '↑ +' : '↓ −'}${money(t.amount_minor)}</div>
           <div class="muted">${fdate(t.date)}${t.time ? ' · ' + esc(t.time) : ''} · ${esc(t.account_name)}</div>
           <div class="desc" title="As read from your statement. May contain errors.">${esc(t.description || '(no description)')}</div>
           ${t.flags.map((f) => `<div class="flag">⚠ ${esc(f)}</div>`).join('')}
           ${item.pair ? `<div class="flag" style="color:var(--accent)">↔ Matches ${money(item.pair.amount_minor)} in ${esc(item.pair.account_name)} on ${fdate(item.pair.date)}</div>` : ''}
         </article></div>
       <div class="ask">What was this transaction for?</div>
-      ${sgCat ? `<div class="suggest"><span class="dot" style="background:${esc(sgCat.color)};width:14px;height:14px"></span>
+      ${sgCat ? `<div class="suggest"><span class="dot" style="background:var(--shade-2);width:14px;height:14px"></span>
         <div class="grow"><b>${esc(sgCat.name)}?</b><span class="small muted">${esc(sg.reason)}</span></div>
         <button class="btn primary" id="accept">Yes <kbd style="margin-left:6px;background:transparent;border-color:rgba(255,255,255,.4);color:inherit">Enter</kbd></button></div>` : ''}
       <div class="cats" role="group" aria-label="Categories">
-        ${orderedCats().map((c, i) => `<button class="cat" style="--c:${esc(c.color)}" data-id="${c.id}" ${sg && sg.category_id === c.id ? 'data-sg' : ''}><kbd>${shortcut(i)}</kbd><span class="dot"></span>${esc(c.name)}</button>`).join('')}
+        ${orderedCats().map((c, i) => `<button class="cat" style="--c:var(--shade-3)" data-id="${c.id}" ${sg && sg.category_id === c.id ? 'data-sg' : ''}><kbd>${shortcut(i)}</kbd><span class="dot"></span>${esc(c.name)}</button>`).join('')}
         <button class="cat" id="newcat" style="--c:var(--muted)"><kbd>+</kbd><span style="font-size:20px;line-height:12px">+</span>New</button></div>
       <div class="actions">
         <button class="btn sm ${opts.showNote || opts.note ? 'primary' : ''}" id="b-note">${opts.note ? 'Note added' : 'Add note'} <kbd>n</kbd></button>
@@ -177,7 +177,7 @@ routes.review = async (main) => {
   }
 
   function newCategoryDialog() {
-    const palette = ['#E07B39', '#5FA55A', '#4A8FE0', '#C25BA8', '#8B78D6', '#D9534F', '#D8A82B', '#2FA39E', '#3BAED6', '#E0809A'];
+    const palette = ['#18181B', '#3F3F46', '#52525B', '#71717A', '#A1A1AA', '#D4D4D8'];
     let color = palette[S.cats.length % palette.length];
     const m = modal(`<h2>New category</h2><div id="nerr"></div><div class="field"><label for="cn">Name</label><input id="cn" maxlength="40" placeholder="e.g. Pets"></div>
       <div class="field"><label>Type</label><div class="seg" id="ck"><button type="button" data-v="expense" class="on">Spending</button><button type="button" data-v="income">Income</button><button type="button" data-v="savings">Savings</button></div></div>
