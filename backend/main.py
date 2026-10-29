@@ -559,7 +559,6 @@ class CategorizeIn(BaseModel):
     type: str | None = None
     apply_similar: bool = False
     remember: bool = False
-    remember: bool = False
     splits: list[SplitIn] | None = None
 
 
@@ -931,33 +930,6 @@ def restore_removed_transaction(txn_id: int, user=Depends(current_user), db=Depe
         raise LookupError("Transaction not found")
     db.commit()
     return {"ok":True}
-
-class ManualTxn(BaseModel):
-    account_id: int
-    date: str
-    amount_minor: int = Field(gt=0,lt=10**13)
-    direction: str
-    merchant: str = Field(min_length=1,max_length=80)
-    description: str = ""
-    category_id: int | None = None
-
-@app.post("/api/transactions")
-def add_manual_transaction(b: ManualTxn, user=Depends(current_user), db=Depends(get_db)):
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}",b.date) or not parse_date(b.date):
-        raise ValueError("Invalid date")
-    if b.direction not in ("debit","credit"):
-        raise ValueError("Invalid direction")
-    if not db.execute("SELECT 1 FROM accounts WHERE id=? AND user_id=?", (b.account_id,user["id"])).fetchone():
-        raise LookupError("Account not found")
-    cat=txns.get_category(db,user["id"],b.category_id)
-    if b.category_id is not None and cat is None:
-        raise ValueError("Invalid category")
-    status="categorized" if cat else "pending"
-    ttype=txns.derive_type(cat["kind"]) if cat else ("income" if b.direction=="credit" else "expense")
-    cur=db.execute("INSERT INTO transactions(user_id,account_id,date,amount_minor,direction,type,merchant,merchant_key,description,category_id,status,reviewed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                   (user["id"],b.account_id,b.date,b.amount_minor,b.direction,ttype,b.merchant,merchant_key(b.merchant),b.description,b.category_id,status,txns.now() if cat else None))
-    db.commit()
-    return txns.get_txn(db,user["id"],cur.lastrowid)
 
 # ================================================================ dashboard, budgets, goals, recurring
 
