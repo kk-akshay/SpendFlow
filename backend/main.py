@@ -489,13 +489,14 @@ def import_files(files: list[UploadFile] = File(...), account_id: int | None = F
             item["warnings"] = res.warnings
             continue
         aid = _resolve_account(db, uid, account_id, new_account_name, new_account_type, res, cache)
+        stored_path = None
         try:
             stored_path = storage.persist(path, uid)
             sid = importing.create_statement(db, uid, aid, name, stored_path, sha, MIME[kind], res)
             db.commit()
         except Exception:
             db.rollback()
-            if 'stored_path' in locals() and stored_path.startswith("s3://"):
+            if stored_path and stored_path.startswith("s3://"):
                 try:
                     storage.delete_file(stored_path, uid)
                 except Exception:
