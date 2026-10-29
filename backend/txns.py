@@ -292,7 +292,7 @@ def _build_item(db, user_id: int, row) -> dict:
         similar = db.execute(
             "SELECT COUNT(*) FROM transactions WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=? AND status='pending' "
             "AND id!=? AND transfer_pair_id IS NULL AND removed_at IS NULL AND (dup_status IS NULL OR dup_status='cleared')",
-            (user_id, t["merchant_key"], t["direction"], t["id"])).fetchone()[0]
+            (user_id, t["account_id"], t["merchant_key"], t["direction"], t["id"])).fetchone()[0]
     pair = None
     if t["transfer_pair_id"]:
         p = db.execute("SELECT t.date, t.amount_minor, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
