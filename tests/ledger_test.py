@@ -2,6 +2,8 @@
 import os
 import tempfile
 from pathlib import Path
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
 
 _tmp = tempfile.TemporaryDirectory()
 os.environ["TALLY_DATA"] = _tmp.name
