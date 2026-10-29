@@ -582,7 +582,7 @@ def review_categorize(txn_id: int, b: CategorizeIn, scope: str = "pending", orde
 def review_skip(txn_id: int, scope: str = "pending", order: str = "desc", user=Depends(current_user), db=Depends(get_db)):
     res = txns.skip_txn(db, user["id"], txn_id)
     scope = "skipped" if scope == "skipped" else "pending"
-    return {"undo": res["undo"], **_review_state(db, user["id"], scope)}
+    return {"undo": res["undo"], **_review_state(db, user["id"], scope, order)}
 
 
 class RestoreIn(BaseModel):
