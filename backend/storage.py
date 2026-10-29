@@ -33,7 +33,7 @@ def persist(path: Path, user_id: int) -> str:
         return str(path)
     bucket = os.environ["SPENDFLOW_S3_BUCKET"]
     key = f"statements/{user_id}/{path.name}"
-    _client().upload_file(str(path), bucket, key, ExtraArgs={"ServerSideEncryption": "AES256"})
+    _client().upload_file(str(path), bucket, key)
     return f"s3://{bucket}/{key}"
 
 
