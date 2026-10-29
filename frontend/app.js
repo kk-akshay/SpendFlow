@@ -34,7 +34,7 @@ const toMinor = (str) => { const n = parseFloat(String(str).replace(/[^\d.]/g, '
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fdate = (iso, withYear = true) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${+d} ${MONTHS[+m - 1]}${withYear ? ' ' + y : ''}`; };
 const fmonth = (ym, long = true) => { const [y, m] = ym.split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en', { month: long ? 'long' : 'short', year: long ? 'numeric' : undefined }); };
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 const typeLabel = { income: 'Income', expense: 'Expense', transfer: 'Transfer' };
 const cat = (id) => S.cats.find((c) => c.id === id);
 const catDot = (c) => `<span class="dot" style="background:${esc(c?.color || c?.category_color || '#9CA3AF')}"></span>`;
@@ -139,7 +139,7 @@ const ICON = {
 const svg = (n) => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
 
 function renderShell() {
-  const items = [['dashboard', 'Home'], ['review', 'Review'], ['transactions', 'History'], ['plan', 'Plan'], ['settings', 'Settings']];
+  const items = [['dashboard', 'Home'], ['review', 'Review'], ['transactions', 'History'], ['calendar', 'Calendar'], ['groups', 'Linked money'], ['plan', 'Plan'], ['settings', 'Settings']];
   $('#app').innerHTML = `<nav class="nav" aria-label="Main"><div class="brand"><i></i>Tally</div>
     ${items.map(([r, l]) => `<a class="item" data-r="${r}" href="#/${r}" ${r === 'review' ? '' : ''}>${svg(r)}<span>${l}</span>${r === 'review' ? '<span class="badge" id="nav-badge" hidden></span>' : ''}</a>`).join('')}
     <div class="grow"></div>
@@ -219,6 +219,7 @@ routes.import = async (main, [ids]) => {
     const id = list[idx];
     const d = await api('/imports/' + id);
     const { statement: st, summary: sm, rows } = d;
+    const keepFlag = window.__importReviewFlag || false;
     if (st.status !== 'preview') { go('#/review'); return; }
     const needsLook = rows.filter((r) => r.dup_status || r.flags.some((f) => !f.startsWith('Read with OCR')));
     main.innerHTML = `<div class="head"><div><h1>Check your import</h1><p class="sub">${esc(st.filename)} · ${esc(st.account_name)}${list.length > 1 ? ` · file ${idx + 1} of ${list.length}` : ''}</p></div>
@@ -246,8 +247,9 @@ routes.import = async (main, [ids]) => {
           <td class="r" style="white-space:nowrap"><button class="btn sm ghost" data-edit="${r.id}">Edit</button><button class="btn sm ghost danger" data-del="${r.id}" aria-label="Remove row">✕</button></td></tr>`;
       }).join('') || '<tr><td colspan="4" class="muted">No rows.</td></tr>';
     };
-    draw(false);
-    $('#onlyflag') && ($('#onlyflag').onchange = (e) => draw(e.target.checked));
+    if ($('#onlyflag')) $('#onlyflag').checked = keepFlag;
+    draw(keepFlag);
+    $('#onlyflag') && ($('#onlyflag').onchange = (e) => { window.__importReviewFlag = e.target.checked; draw(e.target.checked); });
     main.onclick = async (e) => {
       const keep = e.target.closest('[data-keep]'), del = e.target.closest('[data-del]'), ed = e.target.closest('[data-edit]');
       try {
@@ -262,7 +264,7 @@ routes.import = async (main, [ids]) => {
       const b = $('#imp-ok'); b.disabled = true; b.textContent = 'Importing…';
       try {
         const r = await api(`/imports/${id}/commit`, { method: 'POST' });
-        const bits = [`${r.imported} imported`]; if (r.already_imported) bits.push(`${r.already_imported} already there`); if (r.transfers_detected) bits.push(`${r.transfers_detected} looked like transfers between your accounts`);
+        const bits = [`${r.imported} imported`]; if (r.already_imported) bits.push(`${r.already_imported} already there`); if (r.excluded) bits.push(`${r.excluded} excluded by your rules`); if (r.auto_classified) bits.push(`${r.auto_classified} auto-classified`); if (r.transfers_detected) bits.push(`${r.transfers_detected} looked like transfers between your accounts`);
         toast(bits.join(' · ')); await refreshBadge(); next(false);
       } catch (er) { fail(er); b.disabled = false; b.textContent = 'Try again'; }
     };
