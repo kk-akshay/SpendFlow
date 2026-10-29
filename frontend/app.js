@@ -271,7 +271,20 @@ function openImport(preset = {}) {
     if (!$('#pwf', m.el).hidden && $('#ipw', m.el).value) fd.append('pdf_password', $('#ipw', m.el).value);
     if ($('#iai', m.el)?.checked) fd.append('use_ai', 'true');
     try {
-      const { results } = await api('/imports', { method: 'POST', form: fd });
+      const started = await api('/imports/jobs', { method: 'POST', form: fd });
+      const startedAt = Date.now();
+      let job;
+      while (true) {
+        if (Date.now() - startedAt > 20 * 60 * 1000) {
+          throw new Error('The import is taking longer than expected. Check Statements before uploading again.');
+        }
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        job = await api('/imports/jobs/' + encodeURIComponent(started.job_id));
+        if (job.status === 'done') break;
+        if (job.status === 'failed') throw new Error(job.detail || 'Import failed. Please retry.');
+        btn.textContent = 'Processing statement… you can leave this page and return later';
+      }
+      const results = job.results || [];
       const ok = results.filter((r) => r.ok), bad = results.filter((r) => !r.ok);
       if (bad.some((r) => r.needs_password)) $('#pwf', m.el).hidden = false;
       if (bad.length) $('#ierr', m.el).innerHTML = bad.map((r) => `<div class="err-box" role="alert"><b>${esc(r.filename)}</b><br>${esc(r.error)}</div>`).join('');
