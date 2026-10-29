@@ -260,6 +260,10 @@ def remove_person_upi(pid:int,alias_id:int,user=Depends(current_user),db=Depends
     if not n: raise LookupError("UPI ID not found.")
     db.commit();return {"ok":True}
 
+@app.get("/api/people/{pid}/candidates")
+def person_candidates(pid:int,user=Depends(current_user),db=Depends(get_db)):
+    return people.candidates(db,user["id"],pid)
+
 @app.get("/api/people/transaction/{tid}/suggestions")
 def person_suggestions(tid:int,user=Depends(current_user),db=Depends(get_db)):
     return people.suggestions(db,user["id"],tid)
