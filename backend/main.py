@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import analytics, importing, ledger, parse_llm, txns, people
+from . import analytics, importing, ledger, parse_llm, txns, people, storage
 from .auth import (EMAIL_RE, clear_throttle, current_user, end_session, hash_password, require_csrf,
                    start_session, throttle, verify_password, redeem_password_reset, update_password, issue_password_reset, mail_recovery_available, send_password_reset_email)
 from .config import (CURRENCY, FRONTEND_DIR, LOCALE, MAX_FILES_PER_IMPORT, MAX_UPLOAD_BYTES, UPLOAD_DIR)
@@ -178,7 +178,7 @@ class DeleteAccount(BaseModel):
 
 
 def _delete_files(user_id: int) -> None:
-    shutil.rmtree(UPLOAD_DIR / str(user_id), ignore_errors=True)
+    storage.delete_user_files(user_id)
 
 
 @app.post("/api/auth/delete-account")
@@ -334,7 +334,7 @@ def delete_account_row(account_id: int, user=Depends(current_user), db=Depends(g
     """Removes the account together with its statements and transactions."""
     _own_account(db, user["id"], account_id)
     for s in db.execute("SELECT stored_path FROM statements WHERE account_id=?", (account_id,)).fetchall():
-        Path(s["stored_path"]).unlink(missing_ok=True)
+        storage.delete_file(s["stored_path"], user["id"])
     db.execute("DELETE FROM transactions WHERE account_id=?", (account_id,))
     db.execute("DELETE FROM accounts WHERE id=?", (account_id,))
     db.commit()
@@ -489,8 +489,22 @@ def import_files(files: list[UploadFile] = File(...), account_id: int | None = F
             item["warnings"] = res.warnings
             continue
         aid = _resolve_account(db, uid, account_id, new_account_name, new_account_type, res, cache)
-        sid = importing.create_statement(db, uid, aid, name, str(path), sha, MIME[kind], res)
-        db.commit()
+        try:
+            stored_path = storage.persist(path, uid)
+            sid = importing.create_statement(db, uid, aid, name, stored_path, sha, MIME[kind], res)
+            db.commit()
+        except Exception:
+            db.rollback()
+            if 'stored_path' in locals() and stored_path.startswith("s3://"):
+                try:
+                    storage.delete_file(stored_path, uid)
+                except Exception:
+                    pass
+            item["error"] = "Unable to securely save this statement. Please try again."
+            continue
+        finally:
+            if storage.cloud_enabled():
+                path.unlink(missing_ok=True)
         item.update(ok=True, statement_id=sid, count=len(res.rows), source_type=res.source_type, warnings=res.warnings)
     return {"results": results}
 
@@ -629,10 +643,16 @@ def list_statements(user=Depends(current_user), db=Depends(get_db)):
 @app.get("/api/statements/{sid}/file")
 def statement_file(sid: int, user=Depends(current_user), db=Depends(get_db)):
     st = _own_statement(db, user["id"], sid)
-    path = Path(st["stored_path"]).resolve()
-    if UPLOAD_DIR.resolve() not in path.parents or not path.exists():
+    try:
+        kind, file = storage.get_file(st["stored_path"], user["id"])
+    except (OSError, ValueError):
         raise LookupError("The original file is no longer stored.")
-    return FileResponse(path, media_type=st["mime"] or "application/octet-stream", filename=st["filename"])
+    if kind == "local":
+        return FileResponse(file, media_type=st["mime"] or "application/octet-stream", filename=st["filename"])
+    from urllib.parse import quote
+    return StreamingResponse(storage.iter_body(file), media_type=st["mime"] or "application/octet-stream",
+                             headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(st["filename"]),
+                                      "Cache-Control": "private, no-store"})
 
 
 @app.delete("/api/statements/{sid}")
@@ -645,7 +665,7 @@ def delete_statement(sid: int, transactions: bool = False, user=Depends(current_
             marks = ",".join("?" * len(ids))
             db.execute(f"UPDATE transactions SET transfer_pair_id=NULL WHERE transfer_pair_id IN ({marks})", ids)
             db.execute(f"DELETE FROM transactions WHERE id IN ({marks})", ids)
-    Path(st["stored_path"]).unlink(missing_ok=True)
+    storage.delete_file(st["stored_path"], user["id"])
     db.execute("DELETE FROM statements WHERE id=?", (sid,))
     db.commit()
     return {"ok": True}
