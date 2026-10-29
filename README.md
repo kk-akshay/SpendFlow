@@ -36,13 +36,21 @@ Optional: `SPENDFLOW_CURRENCY=INR|USD|...`, `SPENDFLOW_COOKIE_SECURE=1` when ser
 
 Signed-in users can use **Settings > Account security > Change password**.
 
-If you forget the password, select **Forgot password?** on the sign-in page. Since this self-hosted app has no configured email delivery, the server operator must generate a recovery code **on the machine hosting the database**:
+If you forget the password, select **Forgot password?** on the sign-in page. Configure SMTP on the server to enable an email-delivered reset code (15-minute expiry):
 
-```bash
-python -m backend.reset_password_code
+```powershell
+$env:SPENDFLOW_SMTP_HOST="smtp.gmail.com"
+$env:SPENDFLOW_SMTP_PORT="587"
+$env:SPENDFLOW_SMTP_MODE="starttls"
+$env:SPENDFLOW_SMTP_USERNAME="your-address@gmail.com"
+$env:SPENDFLOW_SMTP_PASSWORD="your-email-provider-app-password"
+$env:SPENDFLOW_SMTP_FROM="your-address@gmail.com"
+python3 -m uvicorn backend.main:app --port 8000
 ```
 
-Enter the registered email. The command prints a one-time code valid for **15 minutes**. Enter that code and a new password (at least 12 characters) in SpendFlow's reset screen. Codes are never available through a public unauthenticated endpoint. A successful change revokes all existing login sessions without changing transactions or accounts. Anyone with access to the server and database can create recovery codes; protect that access and never post a code publicly.
+Use a provider-specific SMTP app password or SMTP credential, not your ordinary email password. **Never commit credentials to Git.** Environment variables must be configured before starting the server; for a permanent installation use a protected deployment secret manager. If SMTP is not configured, the UI displays a clear configuration error. A trusted server operator can still use `python3 -m backend.reset_password_code` as an emergency local recovery fallback.
+
+Reset emails and account lookups are rate-limited; account existence is not disclosed to the user requesting an email. Reset tokens are stored as hashes, expire after 15 minutes, can be used once, and invalidate login sessions when redeemed. Financial records remain unchanged.
 
 ## Tests
 
@@ -60,4 +68,4 @@ python3 tests/api_test.py tests/samples       # 57 end-to-end API checks
   or look odd are flagged in the preview, and you can edit, delete or add rows before confirming.
   For scans, prefer the original PDF, or enable the AI option.
 - Google Pay statement layouts change; the reader expects the "Paid to / Received from + UPI Transaction ID" format.
-- Single-user-per-login, SQLite, one server process. No password reset by email.
+- Single-user-per-login, SQLite, one server process. Email password reset requires SMTP configuration.
