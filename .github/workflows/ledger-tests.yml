@@ -27,6 +27,7 @@ jobs:
       - run: python tests/mobile_shell_test.py
       - run: python tests/mobile_router_test.py
       - run: python tests/make_samples.py tests/samples
+      - run: python tests/background_import_test.py
       - run: python tests/api_test.py tests/samples
       - uses: actions/setup-node@v4
         with:

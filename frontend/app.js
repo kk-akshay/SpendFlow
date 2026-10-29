@@ -271,7 +271,20 @@ function openImport(preset = {}) {
     if (!$('#pwf', m.el).hidden && $('#ipw', m.el).value) fd.append('pdf_password', $('#ipw', m.el).value);
     if ($('#iai', m.el)?.checked) fd.append('use_ai', 'true');
     try {
-      const { results } = await api('/imports', { method: 'POST', form: fd });
+      const started = await api('/imports/jobs', { method: 'POST', form: fd });
+      const startedAt = Date.now();
+      let job;
+      while (true) {
+        if (Date.now() - startedAt > 20 * 60 * 1000) {
+          throw new Error('The import is taking longer than expected. Check Statements before uploading again.');
+        }
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        job = await api('/imports/jobs/' + encodeURIComponent(started.job_id));
+        if (job.status === 'done') break;
+        if (job.status === 'failed') throw new Error(job.detail || 'Import failed. Please retry.');
+        btn.textContent = 'Processing statement… you can leave this page and return later';
+      }
+      const results = job.results || [];
       const ok = results.filter((r) => r.ok), bad = results.filter((r) => !r.ok);
       if (bad.some((r) => r.needs_password)) $('#pwf', m.el).hidden = false;
       if (bad.length) $('#ierr', m.el).innerHTML = bad.map((r) => `<div class="err-box" role="alert"><b>${esc(r.filename)}</b><br>${esc(r.error)}</div>`).join('');
@@ -356,7 +369,17 @@ routes.import = async (main, [ids]) => {
     $('#imp-ok').onclick = async () => {
       const b = $('#imp-ok'); b.disabled = true; b.textContent = 'Importing…';
       try {
-        const r = await api(`/imports/${id}/commit`, { method: 'POST' });
+        const queued = await api(`/imports/${id}/commit-job`, { method: 'POST' });
+        let status;
+        const deadline = Date.now() + 20 * 60 * 1000;
+        do {
+          if (Date.now() > deadline) throw new Error('Confirmation is taking longer than expected. Check Statements before retrying.');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          status = await api('/imports/jobs/' + encodeURIComponent(queued.job_id));
+          if (status.status === 'failed') throw new Error(status.detail || 'Confirmation failed.');
+          b.textContent = 'Saving transactions…';
+        } while (status.status !== 'done');
+        const r = status.commit_result;
         const bits = [`${r.imported} imported`]; if (r.already_imported) bits.push(`${r.already_imported} already there`); if (r.excluded) bits.push(`${r.excluded} excluded by your rules`); if (r.auto_classified) bits.push(`${r.auto_classified} auto-classified`); if (r.transfers_detected) bits.push(`${r.transfers_detected} looked like transfers between your accounts`);
         toast(bits.join(' · ')); await refreshBadge(); next(false);
       } catch (er) { fail(er); b.disabled = false; b.textContent = 'Try again'; }
