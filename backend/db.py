@@ -82,7 +82,9 @@ CREATE TABLE IF NOT EXISTS transactions(
   flags TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   reviewed_at TEXT,
-  skipped_at TEXT
+  skipped_at TEXT,
+  removed_at TEXT,
+  excluded_rule_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_txn_user_date ON transactions(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_txn_user_status ON transactions(user_id, status);
@@ -149,6 +151,46 @@ CREATE TABLE IF NOT EXISTS transaction_group_members(
 );
 CREATE INDEX IF NOT EXISTS idx_groups_user ON transaction_groups(user_id);
 
+CREATE TABLE IF NOT EXISTS exclusion_rules(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  merchant_key TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK(direction IN ('debit','credit')),
+  amount_minor INTEGER NOT NULL CHECK(amount_minor > 0),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, account_id, merchant_key, direction, amount_minor)
+);
+
+CREATE TABLE IF NOT EXISTS classification_rules(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  merchant_key TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK(direction IN ('debit','credit')),
+  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK(type IN ('income','expense','transfer')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(user_id, merchant_key, direction)
+);
+
+CREATE TABLE IF NOT EXISTS flow_groups(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN ('pass_through','loan','repayment','reimbursement','temporary_transfer')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS flow_group_members(
+  txn_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+  group_id INTEGER NOT NULL REFERENCES flow_groups(id) ON DELETE CASCADE,
+  original_type TEXT NOT NULL,
+  original_category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+  original_status TEXT NOT NULL,
+  original_reviewed_at TEXT,
+  original_skipped_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_flow_group_members_group ON flow_group_members(group_id);
+
 CREATE TABLE IF NOT EXISTS budgets(
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -201,6 +243,12 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        # Additive migration for existing Tally databases; never rebuild financial rows.
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(transactions)")}
+        if "removed_at" not in columns:
+            conn.execute("ALTER TABLE transactions ADD COLUMN removed_at TEXT")
+        if "excluded_rule_id" not in columns:
+            conn.execute("ALTER TABLE transactions ADD COLUMN excluded_rule_id INTEGER")
         conn.commit()
     finally:
         conn.close()
