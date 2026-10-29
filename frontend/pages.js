@@ -398,36 +398,3 @@ async function linkDialog(groupId,done){
   }catch(e){$('#lerror',m.el).textContent=e.message;}};
   try{await load();}catch(e){fail(e);}
 }
-
-/* ---------- Calendar and manual entries ---------- */
-async function manualTxn(done, dateValue = todayIso()) {
-  const m = modal(`<h2>Add a transaction</h2><div class="field"><label>Date</label><input type="date" id="manual-date" value="${esc(dateValue)}"></div>
-    <div class="field"><label>Account</label><select id="manual-account">${S.accounts.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div>
-    <div class="grid g2"><div class="field"><label>Amount</label><input id="manual-amount" inputmode="decimal" placeholder="150.00"></div>
-    <div class="field"><label>Direction</label><select id="manual-direction"><option value="debit">Money out</option><option value="credit">Money in</option></select></div></div>
-    <div class="field"><label>Merchant</label><input id="manual-merchant" maxlength="80"></div>
-    <div class="field"><label>Category (optional)</label><select id="manual-category"><option value="">Review later</option>${S.cats.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
-    <div id="manual-error"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="manual-save">Save</button></div>`);
-  $('[data-x]',m.el).onclick = () => m.close();
-  $('#manual-save',m.el).onclick = async () => {
-    try {
-      await api('/transactions',{method:'POST',body:{date:$('#manual-date',m.el).value,account_id:+$('#manual-account',m.el).value,amount_minor:toMinor($('#manual-amount',m.el).value),direction:$('#manual-direction',m.el).value,merchant:$('#manual-merchant',m.el).value,category_id:+$('#manual-category',m.el).value||null}});
-      m.close(); toast('Transaction added'); if (done) done();
-    } catch(e) { $('#manual-error',m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; }
-  };
-}
-routes.calendar = async (main) => {
-  let selected = sessionStorage.getItem('spendflow-calendar-date') || todayIso();
-  main.innerHTML = `<div class="head"><div><h1>Calendar</h1><p class="sub">Transactions by day</p></div><div class="row"><button class="btn" id="prev-day">←</button><input type="date" id="calendar-date" value="${esc(selected)}" aria-label="Selected date"><button class="btn" id="next-day">→</button><button class="btn primary" id="calendar-add">+ Add</button></div></div><div id="calendar-transactions"></div>`;
-  const step = n => { const d = new Date(selected+'T12:00:00'); d.setDate(d.getDate()+n); selected = [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-'); $('#calendar-date').value=selected; load(); };
-  $('#prev-day').onclick = () => step(-1); $('#next-day').onclick = () => step(1);
-  $('#calendar-date').onchange = e => { selected=e.target.value; load(); };
-  $('#calendar-add').onclick = () => manualTxn(load,selected);
-  async function load() {
-    sessionStorage.setItem('spendflow-calendar-date',selected);
-    const d=await api('/transactions?from='+selected+'&to='+selected+'&limit=200');
-    $('#calendar-transactions').innerHTML = `<div class="card"><h2>${fdate(selected)}</h2><p class="muted small">${d.total} transactions · In ${money(d.money_in)} · Out ${money(d.money_out)}</p><div class="list">${d.items.map(txnRow).join('')||'<p class="muted">No transactions for this day.</p>'}</div></div>`;
-  }
-  main.onclick=e=>{const t=e.target.closest('[data-txn]');if(t)openTxn(+t.dataset.txn,load);};
-  await load();
-};
