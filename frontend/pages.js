@@ -109,6 +109,8 @@ async function openTxn(id, done) {
   let d;
   try { d = await api('/transactions/' + id); } catch (e) { return fail(e); }
   const t = d.txn; let catId = t.category_id, recurring = t.recurring, type = t.type, changed = false;
+  let allTags = [], currentTags = [];
+  try { [allTags, currentTags] = await Promise.all([api('/tags'),api('/transactions/'+id+'/tags')]); } catch (e) { console.warn('Tags unavailable', e); }
   const m = modal(`<div class="row" style="justify-content:space-between;align-items:flex-start"><div><h2 style="margin:0">${esc(t.merchant || 'Transaction')}</h2><p class="muted small">${fdate(t.date)} · ${esc(t.account_name)}</p></div><b class="num" style="font-size:22px">${t.direction === 'credit' ? '+' : ''}${money(t.amount_minor)}</b></div>
     <div class="desc small muted" style="margin:14px 0;padding:10px 12px;background:var(--surface2);border-radius:12px;word-break:break-word">${esc(t.description || '(no description)')}</div>
     ${t.flags.map((f) => `<div class="flag" style="margin:0 0 8px">⚠ ${esc(f)}</div>`).join('')}
@@ -119,15 +121,28 @@ async function openTxn(id, done) {
       <div class="field"><label>Repeats</label><select id="tr"><option value="">Not recurring</option>${['weekly', 'monthly', 'yearly'].map((f) => `<option value="${f}" ${recurring && t.recurring_freq === f ? 'selected' : ''}>${f[0].toUpperCase() + f.slice(1)}</option>`).join('')}</select></div></div>
     <label class="check small"><input type="checkbox" id="tremember"> Remember classification for future imports</label>
     <div class="field"><label for="tn">Note</label><input id="tn" maxlength="500" value="${esc(t.note || '')}" placeholder="Add a note"></div>
+    <div class="field"><label>Tags · trips, people and projects</label><div class="row" id="transaction-tags" style="gap:6px">${allTags.map(g=>`<label class="check small" style="margin:0;padding:5px 10px;border:1px solid var(--line);border-radius:99px"><input type="checkbox" data-assign-tag="${g.id}" ${currentTags.some(x=>x.id===g.id)?'checked':''} style="width:16px;height:16px"> ${esc(g.name)}</label>`).join('')}<button class="btn sm" type="button" id="txn-create-tag">+ Tag</button></div></div>
     <details style="margin-bottom:8px"><summary class="small muted" style="cursor:pointer">Fix merchant, date or amount</summary><div class="grid g2" style="margin-top:12px">
       <div class="field"><label for="tm">Merchant</label><input id="tm" value="${esc(t.merchant)}" maxlength="80"></div><div class="field"><label for="td">Date</label><input id="td" type="date" value="${esc(t.date)}"></div>
       <div class="field"><label for="ta">Amount</label><input id="ta" inputmode="decimal" value="${(t.amount_minor / 100).toFixed(2)}" ${t.is_split ? 'disabled' : ''}></div>
       <div class="field"><label for="tdir">Direction</label><select id="tdir"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></div></div></details>
     <label class="check small"><input type="checkbox" id="tremember"> Remember category and type for future imports</label>
     <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button><button class="btn sm" id="tperson">Track with person</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
-  $$('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
+  $('#txn-create-tag',m.el).onclick=()=>{
+    const dialog=modal('<h2>New tag</h2><div class="field"><label>Name</label><input id="tag-new-name" maxlength="80"></div><div class="field"><label>Type</label><select id="tag-new-kind"><option value="trip">Trip</option><option value="person">Person / beneficiary</option><option value="custom">Other</option></select></div><div id="tag-new-err"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tag-new-save">Create</button></div>');
+    $('[data-x]',dialog.el).onclick=()=>dialog.close();
+    $('#tag-new-save',dialog.el).onclick=async()=>{
+      try{
+        const tag=await api('/tags',{method:'POST',body:{name:$('#tag-new-name',dialog.el).value,kind:$('#tag-new-kind',dialog.el).value}});
+        if(!$('[data-assign-tag="'+tag.id+'"]',m.el).length)$('#txn-create-tag',m.el).insertAdjacentHTML('beforebegin','<label class="check small"><input type="checkbox" checked data-assign-tag="'+tag.id+'" style="width:16px;height:16px"> '+esc(tag.name)+'</label>');
+        else $('[data-assign-tag="'+tag.id+'"]',m.el).checked=true;
+        dialog.close();
+      }catch(e){$('#tag-new-err',dialog.el).textContent=e.message;}
+    };
+  };
+  $('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
   $('[data-x]', m.el).onclick = () => m.close();
-  const patch = async (body, msg) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
+  const patch = async (body, msg, saveTags = false) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); if(saveTags) await api('/transactions/' + id + '/tags',{method:'PUT',body:{tag_ids:$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}}); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
   $('#tperson',m.el).onclick=()=>{m.close();personLinkDialog(id,done);};
   $('#tflow', m.el).onclick = async () => {
@@ -190,7 +205,7 @@ async function openTxn(id, done) {
     if ($('#td', m.el).value !== t.date) body.date = $('#td', m.el).value;
     const amt = toMinor($('#ta', m.el).value); if (!t.is_split && amt && amt !== t.amount_minor) body.amount_minor = amt;
     if ($('#tdir', m.el).value !== t.direction) body.direction = $('#tdir', m.el).value;
-    patch(body, 'Saved');
+    patch(body, 'Saved', true);
   };
 }
 
