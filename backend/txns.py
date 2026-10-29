@@ -306,7 +306,8 @@ def next_item(db, user_id: int, scope: str = "pending", order: str = "desc") -> 
         sort, status = "t.skipped_at, t.id", "skipped"
     else:
         sort, status = "t.date, COALESCE(t.time,''), t.id", "pending"
-    sort += " ASC" if order == "asc" else " DESC"
+    direction = "ASC" if order == "asc" else "DESC"
+    sort = ", ".join(piece.strip() + " " + direction for piece in sort.split(", ") )
     row = db.execute(
         SELECT_TXN + f" WHERE t.user_id=? AND t.status=? AND {DUP_OK} ORDER BY {sort} LIMIT 1", (user_id, status)).fetchone()
     return _build_item(db, user_id, row) if row else None
