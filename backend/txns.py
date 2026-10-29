@@ -82,10 +82,6 @@ def suggest(db, user_id: int, t: dict) -> dict | None:
             return {"category_id": c["id"], "source": "transfer", "reason": why}
 
     key = t.get("merchant_key") or ""
-    if key:
-        rule = db.execute("SELECT category_id FROM classification_rules WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=?", (user_id, t["account_id"], key, t["direction"])).fetchone()
-        if rule:
-            return {"category_id": rule["category_id"], "source": "saved_rule", "reason": "Your saved classification"}
     name = t.get("merchant") or "this merchant"
     if key:
         saved = db.execute("SELECT category_id FROM classification_rules WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=?",
@@ -259,7 +255,7 @@ def apply_category(db, user_id: int, txn_id: int, p: dict) -> dict:
         rows = db.execute(
             "SELECT id FROM transactions WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=? AND status='pending' "
             "AND id!=? AND transfer_pair_id IS NULL AND removed_at IS NULL AND (dup_status IS NULL OR dup_status='cleared')",
-            (user_id, t["merchant_key"], t["direction"], txn_id)).fetchall()
+            (user_id, t["account_id"], t["merchant_key"], t["direction"], txn_id)).fetchall()
         for r in rows:
             snaps.append(snapshot(db, r["id"]))
             db.execute("UPDATE transactions SET category_id=?, type=?, status='categorized', reviewed_at=? WHERE id=?",
