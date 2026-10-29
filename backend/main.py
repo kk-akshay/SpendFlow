@@ -774,8 +774,8 @@ def exclude_transaction(txn_id: int, b: ExclusionIn, user=Depends(current_user),
     if not b.confirmed:
         raise HTTPException(400, "Confirm the exclusion rule before saving.")
     ledger.save_exclusion(db, user["id"], txn_id)
-    db.execute("UPDATE transactions SET transfer_pair_id=NULL WHERE user_id=? AND transfer_pair_id=?", (user["id"], txn_id))
-    db.execute("DELETE FROM transactions WHERE id=? AND user_id=?", (txn_id, user["id"]))
+    # Preserve the original imported financial record; hide it without altering its bank balance.
+    db.execute("UPDATE transactions SET removed_at=datetime('now') WHERE id=? AND user_id=?", (txn_id, user["id"]))
     db.commit()
     return {"ok": True}
 
