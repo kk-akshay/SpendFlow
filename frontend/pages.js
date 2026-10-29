@@ -318,7 +318,7 @@ routes.settings = async (main) => {
     <div class="card"><h2 style="margin-bottom:6px">Your data</h2><p class="muted small" style="margin-bottom:14px">Everything lives in this app's own database and upload folder. Nothing is shared.</p>
       <div class="row"><a class="btn" href="/api/export.csv" download>Export all as CSV</a><button class="btn danger" id="wipe">Delete all statements &amp; transactions</button><button class="btn danger" id="delacc">Delete my account</button></div></div>`;
   $('#imp').onclick = () => openImport();
-  $('[data-rule-cat]').forEach(el => { el.onchange = async () => { try { const rule = classificationRules.find(r=>r.id===+el.dataset.ruleCat); const newCat=cat(+el.value); await api('/classification-rules/'+rule.id,{method:'PATCH',body:{category_id:newCat.id,type:newCat.kind==='income'?'income':newCat.kind==='transfer'?'transfer':'expense'}}); toast('Rule updated'); } catch(e){fail(e);} }; });
+  $$('[data-rule-cat]').forEach(el => { el.onchange = async () => { try { const rule = classificationRules.find(r=>r.id===+el.dataset.ruleCat); const newCat=cat(+el.value); await api('/classification-rules/'+rule.id,{method:'PATCH',body:{category_id:newCat.id,type:newCat.kind==='income'?'income':newCat.kind==='transfer'?'transfer':'expense'}}); toast('Rule updated'); } catch(e){fail(e);} }; });
   $('#change-password').onclick = () => {
     const m = modal(`<h2>Change password</h2><div id="password-error" role="alert"></div>
       <div class="field"><label for="current-password">Current password</label><input id="current-password" type="password" autocomplete="current-password"></div>
