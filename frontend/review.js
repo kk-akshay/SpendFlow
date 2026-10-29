@@ -46,6 +46,24 @@ routes.review = async (main) => {
           ${t.flags.map((f) => `<div class="flag">⚠ ${esc(f)}</div>`).join('')}
           ${item.pair ? `<div class="flag" style="color:var(--accent)">↔ Matches ${money(item.pair.amount_minor)} in ${esc(item.pair.account_name)} on ${fdate(item.pair.date)}</div>` : ''}
         </article></div>
+      <section class="review-prepare">
+        <div class="review-prepare-title"><h2>Before you categorize</h2>
+          <p>Add optional details first. Choosing a category saves and moves to the next transaction.</p></div>
+        <div class="review-tools" role="group" aria-label="Transaction details">
+          <button type="button" class="review-tool ${opts.showNote || opts.note ? 'is-selected' : ''}" id="b-note" aria-expanded="${opts.showNote}">
+            <span class="review-tool-symbol" aria-hidden="true">✎</span><span class="review-tool-name">Note</span>
+            <span class="review-tool-hint">${opts.note ? 'Added' : 'Add details'}</span>
+          </button>
+          <button type="button" class="review-tool" id="b-split" title="Split amount across categories and save">
+            <span class="review-tool-symbol" aria-hidden="true">◫</span><span class="review-tool-name">Split</span>
+            <span class="review-tool-hint">Split &amp; save</span>
+          </button>
+          <button type="button" class="review-tool ${opts.recurring ? 'is-selected' : ''}" id="b-rec" aria-pressed="${opts.recurring}">
+            <span class="review-tool-symbol" aria-hidden="true">↻</span><span class="review-tool-name">Recurring</span>
+            <span class="review-tool-hint">${opts.recurring ? 'Marked' : 'Mark repeat'}</span>
+          </button>
+        </div>
+        ${opts.showNote ? `<div class="field review-note-field"><label for="note">Transaction note</label><input id="note" placeholder="e.g. Dinner on Goa trip" maxlength="500" value="${esc(opts.note)}"></div>` : ''}
       <div class="field review-tags" style="margin-top:18px">
         <label>Tags (optional) · Trip, person or project</label>
         <div class="row" style="gap:7px">
@@ -54,22 +72,28 @@ routes.review = async (main) => {
         </div>
         <div class="small muted" style="margin-top:6px">Tags don't change whether a transaction counts as an expense, income or loan.</div>
       </div>
-      <div class="ask">What was this transaction for?</div>
+        <div class="review-rule-options">
+          <label class="review-rule">
+            <input type="checkbox" id="remember" ${opts.remember ? 'checked' : ''}>
+            <span><strong>Remember this classification</strong><small>Automatically categorize future matches for this merchant and account.</small></span>
+          </label>
+          ${item.similar_count > 0 ? `<label class="review-rule">
+            <input type="checkbox" id="sim" ${opts.similar ? 'checked' : ''}>
+            <span><strong>Apply category to ${item.similar_count} similar transaction${item.similar_count > 1 ? 's' : ''}</strong><small>Same merchant and account · category only, not notes or tags.</small></span>
+          </label>` : ''}
+        </div>
+        <div class="review-secondary-actions">
+          <button class="btn sm" id="b-skip">Skip for now</button>
+          <button class="btn sm ghost" id="b-undo" ${lastUndo ? '' : 'disabled'}>Undo last action</button>
+        </div>
+      </section>
+      <div class="ask">Choose a category to save &amp; continue</div>
       ${sgCat ? `<div class="suggest"><span class="dot" style="background:var(--shade-2);width:14px;height:14px"></span>
         <div class="grow"><b>${esc(sgCat.name)}?</b><span class="small muted">${esc(sg.reason)}</span></div>
-        <button class="btn primary" id="accept">Yes <kbd style="margin-left:6px;background:transparent;border-color:rgba(255,255,255,.4);color:inherit">Enter</kbd></button></div>` : ''}
+        <button class="btn primary" id="accept">Use suggestion <kbd style="margin-left:6px;background:transparent;border-color:rgba(255,255,255,.4);color:inherit">Enter</kbd></button></div>` : ''}
       <div class="cats" role="group" aria-label="Categories">
         ${orderedCats().map((c, i) => `<button class="cat" style="--c:var(--shade-3)" data-id="${c.id}" ${sg && sg.category_id === c.id ? 'data-sg' : ''}><kbd>${shortcut(i)}</kbd><span class="dot"></span>${esc(c.name)}</button>`).join('')}
         <button class="cat" id="newcat" style="--c:var(--muted)"><kbd>+</kbd><span style="font-size:20px;line-height:12px">+</span>New</button></div>
-      <div class="actions">
-        <button class="btn sm ${opts.showNote || opts.note ? 'primary' : ''}" id="b-note">${opts.note ? 'Note added' : 'Add note'} <kbd>n</kbd></button>
-        <button class="btn sm" id="b-split">Split <kbd>/</kbd></button>
-        <button class="btn sm ${opts.recurring ? 'primary' : ''}" id="b-rec">${opts.recurring ? 'Recurring ✓' : 'Recurring'} <kbd>.</kbd></button>
-        <button class="btn sm" id="b-skip">Skip for now <kbd>␣</kbd></button>
-        <button class="btn sm" id="b-undo" ${lastUndo ? '' : 'disabled'}>Undo <kbd>⌫</kbd></button></div>
-      ${opts.showNote ? `<div class="field" style="margin-top:14px"><label for="note" class="sr">Note</label><input id="note" placeholder="Add a note (optional)" maxlength="500" value="${esc(opts.note)}"></div>` : ''}
-      <label class="check small" style="justify-content:center"><input type="checkbox" id="remember" ${opts.remember ? 'checked' : ''}> Remember this merchant/account pattern for future imports</label>
-      ${item.similar_count > 0 ? `<label class="check small" style="justify-content:center;margin-top:8px"><input type="checkbox" id="sim" ${opts.similar ? 'checked' : ''}> Also apply to ${item.similar_count} other “${esc(t.merchant)}” transaction${item.similar_count > 1 ? 's' : ''} waiting for review</label>` : ''}
       <div class="keys"><kbd>Enter</kbd> accept suggestion · <kbd>→</kbd> accept / <kbd>←</kbd> skip · category keys shown on buttons</div></div>`;
     wire(item);
   }
