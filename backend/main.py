@@ -659,6 +659,12 @@ def add_staged(sid: int, n: StagedNew, user=Depends(current_user), db=Depends(ge
     return {"id": tid}
 
 
+@app.post("/api/imports/{sid}/commit-job", status_code=202)
+def queue_statement_commit(sid: int, user=Depends(current_user)):
+    from . import import_jobs
+    return {"job_id": import_jobs.enqueue_commit(user["id"], sid), "status": "queued"}
+
+
 @app.post("/api/imports/{sid}/commit")
 def commit_import(sid: int, user=Depends(current_user), db=Depends(get_db)):
     _own_statement(db, user["id"], sid)
