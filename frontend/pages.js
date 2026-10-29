@@ -436,3 +436,22 @@ async function linkDialog(groupId,done){
   }catch(e){$('#lerror',m.el).textContent=e.message;}};
   try{await load();}catch(e){fail(e);}
 }
+
+/* ---------- Trip / Person / Custom tags ---------- */
+routes.tags = async (main) => {
+  const tags = await api('/tags');
+  main.innerHTML = `<div class="head"><div><h1>Tags & Trips</h1><p class="sub">Track spending for a trip, person or project without changing its category.</p></div><button id="tag-create" class="btn primary">+ New tag</button></div>
+  <div class="grid g2">${tags.map(t => `<div class="card"><div class="row" style="justify-content:space-between"><div><div class="small muted">${esc(t.kind)}</div><h2>${esc(t.name)}</h2></div><b class="num">${money(t.expense_minor)}</b></div><div class="small muted" style="margin-top:8px">${t.transaction_count} linked transaction(s) · Expense total only</div><button class="btn sm" style="margin-top:12px" data-open-tag="${t.id}">View transactions</button></div>`).join('') || '<div class="card">No tags yet. Create a trip, person or other tag and assign it while reviewing a transaction.</div>'}</div>`;
+  $('#tag-create').onclick = () => {
+    const m = modal('<h2>Create tag</h2><div id="tag-error"></div><div class="field"><label>Name</label><input id="tag-name" maxlength="80" placeholder="e.g. Goa trip"></div><div class="field"><label>Type</label><select id="tag-kind"><option value="trip">Trip</option><option value="person">Person / beneficiary</option><option value="custom">Other</option></select></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tag-save">Create</button></div>');
+    $('[data-x]',m.el).onclick=()=>m.close();
+    $('#tag-save',m.el).onclick=async()=>{try{await api('/tags',{method:'POST',body:{name:$('#tag-name',m.el).value,kind:$('#tag-kind',m.el).value}});m.close();route();}catch(e){$('#tag-error',m.el).textContent=e.message;}};
+  };
+  $$('[data-open-tag]',main).forEach(b=>b.onclick=async()=>{
+    try{
+      const data=await api('/tags/'+b.dataset.openTag+'/transactions');
+      const m=modal('<h2>'+esc(data.tag.name)+'</h2><p class="muted small">All tagged transactions; expense totals exclude transfers.</p><div class="list">'+data.transactions.map(t=>'<div><span class="grow"><b>'+esc(t.merchant||t.description)+'</b><div class="small muted">'+fdate(t.date)+' · '+esc(t.type)+'</div></span><b class="num">'+money(t.amount_minor)+'</b></div>').join('')+'</div><div class="foot"><button class="btn" data-x>Close</button></div>');
+      $('[data-x]',m.el).onclick=()=>m.close();
+    }catch(e){fail(e);}
+  });
+};
