@@ -85,7 +85,7 @@ async function refreshBadge() {
   try {
     const d = await api('/review/next');
     S.badge = d.progress.pending + d.progress.skipped;
-    const b = $('#nav-badge'); if (b) { b.textContent = S.badge; b.hidden = !S.badge; }
+    $('[data-review-badge]').forEach(b=>{b.textContent=S.badge;b.hidden=!S.badge;});
   } catch { /* ignore */ }
 }
 
@@ -97,7 +97,16 @@ async function route() {
   if (S.cleanup) { S.cleanup(); S.cleanup = null; }
   const [name, ...rest] = (location.hash.replace(/^#\/?/, '') || 'dashboard').split('/');
   const fn = routes[name] || routes.dashboard;
-  $$('.nav a.item').forEach((a) => a.classList.toggle('on', a.dataset.r === (routes[name] ? name : 'dashboard')));
+  const active=routes[name]?name:'dashboard';
+  $('.nav a.item,.mobile-nav a.item').forEach(a=>{
+    const on=a.dataset.r===active;
+    a.classList.toggle('on',on);
+    if(on)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');
+  });
+  $('[data-more-link]').forEach(a=>a.classList.toggle('on',a.dataset.moreLink===active));
+  const more=$('#mobile-more-button'),secondary=['review','people','plan','settings'].includes(active);
+  if(more){more.classList.toggle('on',secondary);if(secondary)more.setAttribute('aria-current','page');else more.removeAttribute('aria-current');}
+  closeMore(false);
   const main = $('main');
   main.innerHTML = '<div class="grid g3"><div class="skel" style="height:96px"></div><div class="skel" style="height:96px"></div><div class="skel" style="height:96px"></div></div>';
   try { await fn(main, rest); } catch (e) { main.innerHTML = `<div class="empty"><div class="big">⚠️</div><h2>Couldn't load this page</h2><p>${esc(e.message)}</p><button class="btn primary" onclick="route()">Try again</button></div>`; }
@@ -108,7 +117,7 @@ window.addEventListener('hashchange', route);
 /* ---------- auth ---------- */
 function renderAuth(mode = 'login') {
   $('#app').innerHTML = `<div class="auth"><form class="card" id="af" novalidate>
-    <div class="brand" style="padding:0 0 18px"><i></i>SpendFlow</div>
+    <div class="brand" style="padding:0 0 18px">${brandLogo()}<span>SpendFlow</span></div>
     <h1 style="font-size:22px">${mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
     <p class="muted" style="margin:6px 0 22px">${mode === 'login' ? 'Pick up where you left off.' : 'Understand where your money goes. Your data stays on this server.'}</p>
     <div id="aerr"></div>
@@ -145,7 +154,7 @@ function renderAuth(mode = 'login') {
 /* ---------- password recovery ---------- */
 function renderPasswordReset() {
   $('#app').innerHTML = `<div class="auth"><div class="card">
-    <div class="brand" style="padding:0 0 18px"><i></i>SpendFlow</div>
+    <div class="brand" style="padding:0 0 18px">${brandLogo()}<span>SpendFlow</span></div>
     <h1 style="font-size:22px">Forgot password?</h1>
     <p class="muted small" style="margin:8px 0 18px">Enter your registered email address to receive a 15-minute recovery code.</p>
     <form id="request-reset">
@@ -185,34 +194,23 @@ function renderPasswordReset() {
   };
 }
 
-/* ---------- shell ---------- */
-const ICON = {
-  dashboard: '<path d="M4 13h6V4H4zM14 20h6V4h-6zM4 20h6v-3H4z"/>',
-  review: '<rect x="5" y="4" width="14" height="16" rx="3"/><path d="M9 9h6M9 13h4"/>',
-  transactions: '<path d="M4 7h16M4 12h16M4 17h10"/>',
-  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/>',
-  people: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
-  plan: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
-  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>',
-};
-const svg = (n) => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
-
-function renderShell() {
-  const items = [['dashboard', 'Home'], ['review', 'Review'], ['transactions', 'History'], ['calendar', 'Calendar'], ['groups', 'Linked money'], ['people', 'People & Loans'], ['plan', 'Plan'], ['settings', 'Settings']];
-  $('#app').innerHTML = `<nav class="nav" aria-label="Main"><div class="brand"><i></i>SpendFlow</div>
-    ${items.map(([r, l]) => `<a class="item" data-r="${r}" href="#/${r}" ${r === 'review' ? '' : ''}>${svg(r)}<span>${l}</span>${r === 'review' ? '<span class="badge" id="nav-badge" hidden></span>' : ''}</a>`).join('')}
-    <div class="grow"></div>
-    <button class="btn primary desk" id="nav-import">Import statement</button>
-    <button class="btn ghost desk" id="nav-theme">Toggle dark mode</button></nav><main id="main"></main>`;
-  $('#nav-import').onclick = () => openImport();
-  $('#nav-theme').onclick = toggleTheme;
+/* ---------- theme ---------- */
+function effectiveTheme(){const t=document.documentElement.dataset.theme;return t==='light'||t==='dark'?t:(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');}
+function syncThemeButton(){
+  const button=$('#theme-toggle');
+  if(!button)return;
+  const dark=effectiveTheme()==='dark';
+  button.innerHTML=svg(dark?'sun':'moon');
+  button.setAttribute('aria-label',dark?'Switch to light mode':'Switch to dark mode');
+  button.title=dark?'Switch to light mode':'Switch to dark mode';
 }
-function toggleTheme() {
-  const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
-  const next = cur === 'dark' ? 'light' : 'dark';
-  document.documentElement.dataset.theme = next;
-  try { localStorage.setItem('spendflow-theme', next); } catch { /* ignore */ }
+function setTheme(next){
+  document.documentElement.dataset.theme=next;
+  try{localStorage.setItem('spendflow-theme',next);}catch{}
+  syncThemeButton();
+  $$('#theme button').forEach(b=>b.classList.toggle('on',b.dataset.t===next));
 }
+function toggleTheme(){setTheme(effectiveTheme()==='dark'?'light':'dark');}
 
 async function boot() {
   try { S.cfg = await api('/config'); } catch { /* defaults */ }
