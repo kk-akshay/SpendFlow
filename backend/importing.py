@@ -34,7 +34,7 @@ def create_statement(db, user_id: int, account_id: int, filename: str, stored_pa
     remembered_names = payee_names.all_rules(db, user_id)
     params = [
         (user_id, account_id, sid, r["date"], r.get("time"), r["amount_minor"],
-         r["direction"], "income" if r["direction"] == "credit" else "expense",
+         r["direction"], ("transfer" if res.source_type == "card" and "Credit card repayment" in r.get("flags", []) else ("expense" if res.source_type == "card" else ("income" if r["direction"] == "credit" else "expense"))),
          *payee_names.renamed_fields(r, remembered_names),
          r.get("description", ""), r.get("ref"), r.get("balance_minor"), json.dumps(r.get("flags", [])))
         for r in res.rows
@@ -49,7 +49,8 @@ def create_statement(db, user_id: int, account_id: int, filename: str, stored_pa
 
 
 def insert_staged_row(db, user_id: int, account_id: int, statement_id: int, r: dict) -> int:
-    ttype = "income" if r["direction"] == "credit" else "expense"
+    account = db.execute("SELECT type FROM accounts WHERE id=? AND user_id=?", (account_id,user_id)).fetchone()
+    ttype = ("transfer" if account and account["type"] == "card" and "Credit card repayment" in r.get("flags", []) else ("expense" if account and account["type"] == "card" else ("income" if r["direction"] == "credit" else "expense")))
     cur = db.execute(
         "INSERT INTO transactions(user_id,account_id,statement_id,date,time,amount_minor,direction,type,merchant,"
         "merchant_key,description,ref,balance_minor,status,flags) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'staged',?)",
