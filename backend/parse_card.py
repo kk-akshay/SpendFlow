@@ -3,18 +3,18 @@ import re
 from collections import Counter
 from .parse_common import group_lines, parse_date, to_minor
 
-DATE = re.compile(r"^\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+([A-Za-z]{3,9}),?\\s+(20\\d{2})\\b", re.I)
-AMOUNT = re.compile(r"(-?)\\s*₹\\s*([\\d,]+\\.\\d{2})")
-LAST4 = re.compile(r"(?:[xX*]{4}\\s*){3}(\\d{4})")
+DATE = re.compile(r"^\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9}),?\s+(20\d{2})\b", re.I)
+AMOUNT = re.compile(r"(-?)\s*₹\s*([\d,]+\.\d{2})")
+LAST4 = re.compile(r"(?:[xX*]{4}\s*){3}(\d{4})")
 def _text(page, i):
     return [line.text.strip() for line in group_lines(page, i)]
 
 def detect_card(pages):
     if not pages: return None
-    top = "\\n".join(_text(pages[0],0)[:55])
+    top = "\n".join(_text(pages[0],0)[:55])
     if "Utkarsh Small Finance Bank" in top and ("super.money" in top.lower() or "total limit:" in top.lower()):
         m=LAST4.search(top)
-        lim=re.search(r"Total Limit:\\s*₹\\s*([\\d,]+\\.\\d{2})",top,re.I)
+        lim=re.search(r"Total Limit:\s*₹\s*([\d,]+\.\d{2})",top,re.I)
         due=re.search(r"Payment Due Date.*?Total Amount Due",top,re.I)
         return {"name":"SuperMoney SuperCard", "last4":m.group(1) if m else None,
                 "limit_minor":to_minor(lim.group(1)) if lim else None,
@@ -27,7 +27,7 @@ def parse_card(pages):
     rows=[]; warnings=[]; in_table=False; pending_purchase=None
     for pi,page in enumerate(pages):
         lines=_text(page,pi)
-        if "All Transactions" in "\\n".join(lines[:10]):
+        if "All Transactions" in "\n".join(lines[:10]):
             in_table=True
         elif pi>0 and not in_table:
             continue
@@ -67,7 +67,7 @@ def parse_card(pages):
             pending_purchase=None
             amt=a[-1]
             description=tail[:amt.start()].strip()
-            description=re.sub(r"^(?:UPI|Online)\\s+","",description,flags=re.I).strip()
+            description=re.sub(r"^(?:UPI|Online)\s+","",description,flags=re.I).strip()
             if not description: continue
             is_payment=bool(re.fullmatch("Payment",description,re.I))
             refund=amt.group(1)=="-"
@@ -76,9 +76,9 @@ def parse_card(pages):
                          "flags":["Credit card repayment"] if is_payment else (["Credit card refund"] if refund else [])})
     if not rows: warnings.append("No credit-card transactions found; check the statement.")
     # Do not silently reconcile to the cover-page summary: expose any discrepancy.
-    first="\\n".join(_text(pages[0],0))
+    first="\n".join(_text(pages[0],0))
     def summary(label):
-        x=re.search(r"^"+re.escape(label)+r"\\s+₹\\s*([\\d,]+\\.\\d{2})",first,re.M|re.I)
+        x=re.search(r"^"+re.escape(label)+r"\s+₹\s*([\d,]+\.\d{2})",first,re.M|re.I)
         return to_minor(x.group(1)) if x else None
     purchases=sum(r["amount_minor"] for r in rows if r["direction"]=="debit")
     repayments=sum(r["amount_minor"] for r in rows if "Credit card repayment" in r["flags"])
