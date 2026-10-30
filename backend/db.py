@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS accounts(
   name TEXT NOT NULL,
   type TEXT NOT NULL DEFAULT 'bank',
   last4 TEXT,
+  card_monthly_limit_minor INTEGER NOT NULL DEFAULT 0,
+  card_credit_limit_minor INTEGER NOT NULL DEFAULT 0,
+  card_opening_outstanding_minor INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -58,6 +61,7 @@ CREATE TABLE IF NOT EXISTS statements(
   parser TEXT,                                -- columns | text | gpay | ai
   status TEXT NOT NULL DEFAULT 'preview',     -- preview | imported
   warnings TEXT NOT NULL DEFAULT '[]',
+  card_meta TEXT NOT NULL DEFAULT '{}',
   date_from TEXT,
   date_to TEXT,
   txn_count INTEGER NOT NULL DEFAULT 0,
@@ -225,6 +229,23 @@ CREATE TABLE IF NOT EXISTS budgets(
   limit_minor INTEGER NOT NULL CHECK(limit_minor > 0)
 );
 
+CREATE TABLE IF NOT EXISTS import_jobs(
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK(status IN ('queued','processing','done','failed')),
+  payload TEXT NOT NULL,
+  result TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_import_jobs_user ON import_jobs(user_id,status);
+
+CREATE TABLE IF NOT EXISTS payee_name_rules(
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  identity TEXT NOT NULL,
+  name TEXT NOT NULL,
+  PRIMARY KEY(user_id,identity)
+);
+
 CREATE TABLE IF NOT EXISTS tags(
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -298,6 +319,16 @@ def init_db() -> None:
             conn.execute("ALTER TABLE transactions ADD COLUMN removed_at TEXT")
         if "excluded_rule_id" not in columns:
             conn.execute("ALTER TABLE transactions ADD COLUMN excluded_rule_id INTEGER")
+        account_columns = {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
+        if "card_monthly_limit_minor" not in account_columns:
+            conn.execute("ALTER TABLE accounts ADD COLUMN card_monthly_limit_minor INTEGER NOT NULL DEFAULT 0")
+        if "card_credit_limit_minor" not in account_columns:
+            conn.execute("ALTER TABLE accounts ADD COLUMN card_credit_limit_minor INTEGER NOT NULL DEFAULT 0")
+        if "card_opening_outstanding_minor" not in account_columns:
+            conn.execute("ALTER TABLE accounts ADD COLUMN card_opening_outstanding_minor INTEGER NOT NULL DEFAULT 0")
+        statement_columns = {r["name"] for r in conn.execute("PRAGMA table_info(statements)")}
+        if "card_meta" not in statement_columns:
+            conn.execute("ALTER TABLE statements ADD COLUMN card_meta TEXT NOT NULL DEFAULT '{}'")
         conn.commit()
     finally:
         conn.close()
