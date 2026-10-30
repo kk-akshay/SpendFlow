@@ -14,6 +14,7 @@ def test_supercard_repayments_refunds_wrapped_fuel_and_illustration_excluded():
 super.money
 xxxx xxxx xxxx 0103
 Total Limit: ₹9,000.00
+15th Sep, 2026 ₹202.18 ₹10.11
 Transactions and EMIs ₹202.18
 Repayments ₹150.00
 Transaction Reversals and Refunds ₹30.00"""
