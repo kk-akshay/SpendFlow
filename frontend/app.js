@@ -34,6 +34,37 @@ const toMinor = (str) => { const n = parseFloat(String(str).replace(/[^\d.]/g, '
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fdate = (iso, withYear = true) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${+d} ${MONTHS[+m - 1]}${withYear ? ' ' + y : ''}`; };
 const fmonth = (ym, long = true) => { const [y, m] = ym.split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en', { month: long ? 'long' : 'short', year: long ? 'numeric' : undefined }); };
+/* Reusable, theme-aware month selector (no browser-native month popup). */
+function monthSelector(ym, onChange, { label = 'Select month' } = {}) {
+  const container = document.createElement('div');
+  container.className = 'month-picker';
+  let selected = /^\d{4}-(0[1-9]|1[0-2])$/.test(ym) ? ym : todayIso().slice(0,7);
+  let displayYear = Number(selected.slice(0,4));
+  const close = () => { container.classList.remove('open'); button.setAttribute('aria-expanded','false'); popup.hidden = true; };
+  const button = document.createElement('button');
+  button.type='button';button.className='month-picker-trigger';button.setAttribute('aria-label',label);
+  button.setAttribute('aria-expanded','false');button.setAttribute('aria-haspopup','dialog');
+  const popup=document.createElement('div');popup.className='month-picker-popup';popup.hidden=true;
+  container.append(button,popup);
+  function draw() {
+    button.textContent = fmonth(selected) + '  ▾';
+    popup.innerHTML = '<div class="month-picker-header"><button type="button" data-year="-1" aria-label="Previous year">‹</button><strong>'+displayYear+'</strong><button type="button" data-year="1" aria-label="Next year">›</button></div>'+
+      '<div class="month-picker-grid">'+MONTHS.map((name,i)=>{
+        const value=displayYear+'-'+String(i+1).padStart(2,'0');
+        return '<button type="button" data-month="'+value+'" class="'+(value===selected?'chosen':'')+'" aria-pressed="'+(value===selected)+'">'+name+'</button>';
+      }).join('')+'</div><button type="button" class="month-picker-today" data-current>This month</button>';
+  }
+  button.onclick=()=>{const open=popup.hidden;document.querySelectorAll('.month-picker.open').forEach(el=>{if(el!==container){el.classList.remove('open');const p=el.querySelector('.month-picker-popup');if(p)p.hidden=true;}});popup.hidden=!open;container.classList.toggle('open',open);button.setAttribute('aria-expanded',String(open));};
+  popup.onclick=e=>{
+    const yr=e.target.closest('[data-year]'),mo=e.target.closest('[data-month]'),now=e.target.closest('[data-current]');
+    if(yr){displayYear+=Number(yr.dataset.year);draw();}
+    if(mo||now){const next=now?todayIso().slice(0,7):mo.dataset.month;selected=next;displayYear=+selected.slice(0,4);close();draw();onChange(next);}
+  };
+  const dismiss=e=>{if(!container.isConnected){document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',escape);return;}if(!container.contains(e.target))close();};
+  const escape=e=>{if(!container.isConnected){document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',escape);return;}if(e.key==='Escape'&&!popup.hidden){close();button.focus();}};
+  document.addEventListener('pointerdown',dismiss);document.addEventListener('keydown',escape);
+  draw();return container;
+}
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 const typeLabel = { income: 'Income', expense: 'Expense', transfer: 'Transfer' };
 const cat = (id) => S.cats.find((c) => c.id === id);
@@ -56,13 +87,26 @@ function modal(html, { onClose } = {}) {
   const prev = document.activeElement;
   const scrim = document.createElement('div');
   scrim.className = 'scrim';
-  scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true">${html}</div>`;
-  const close = () => { scrim.remove(); document.removeEventListener('keydown', onKey, true); prev && prev.focus && prev.focus(); onClose && onClose(); };
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-  scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) close(); });
+  scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
+  // Prevent scroll on the page behind the dialog, including on mobile.
+  const previousOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    scrim.remove();
+    document.removeEventListener('keydown', onKey, true);
+    if (!document.querySelector('.scrim')) document.body.style.overflow = previousOverflow;
+    prev && prev.isConnected && prev.focus && prev.focus({ preventScroll: true });
+    onClose && onClose();
+  };
+  const onKey = (e) => { if (e.key === 'Escape' && scrim.isConnected) { e.preventDefault(); e.stopPropagation(); close(); } };
+  scrim.addEventListener('click', (e) => { if (e.target === scrim) close(); });
   document.addEventListener('keydown', onKey, true);
   document.body.append(scrim);
-  const first = $('input,select,textarea,button.primary', scrim); first && first.focus();
+  const first = $('input,select,textarea,button.primary,button[data-x]', scrim);
+  first && first.focus({ preventScroll: true });
   return { el: $('.modal', scrim), close };
 }
 function confirmBox({ title, body, ok = 'Confirm', danger = false, typed }) {
@@ -85,7 +129,11 @@ async function refreshBadge() {
   try {
     const d = await api('/review/next');
     S.badge = d.progress.pending + d.progress.skipped;
-    $('[data-review-badge]').forEach(b=>{b.textContent=S.badge;b.hidden=!S.badge;});
+    $$('[data-review-badge]').forEach(b=>{
+      b.textContent = S.badge > 99 ? '99+' : S.badge;
+      b.hidden = !S.badge;
+      b.setAttribute('aria-label', S.badge + ' transactions awaiting review');
+    });
   } catch { /* ignore */ }
 }
 
@@ -104,7 +152,7 @@ async function route() {
     if(on)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');
   });
   $$('[data-more-link]').forEach(a=>a.classList.toggle('on',a.dataset.moreLink===active));
-  const more=$('#mobile-more-button'),secondary=['review','people','plan','settings'].includes(active);
+  const more=$('#mobile-more-button'),secondary=['calendar','groups','people','tags','plan','settings'].includes(active);
   if(more){more.classList.toggle('on',secondary);if(secondary)more.setAttribute('aria-current','page');else more.removeAttribute('aria-current');}
   closeMore(false);
   const main = $('main');
@@ -258,7 +306,20 @@ function openImport(preset = {}) {
     if (!$('#pwf', m.el).hidden && $('#ipw', m.el).value) fd.append('pdf_password', $('#ipw', m.el).value);
     if ($('#iai', m.el)?.checked) fd.append('use_ai', 'true');
     try {
-      const { results } = await api('/imports', { method: 'POST', form: fd });
+      const started = await api('/imports/jobs', { method: 'POST', form: fd });
+      const startedAt = Date.now();
+      let job;
+      while (true) {
+        if (Date.now() - startedAt > 20 * 60 * 1000) {
+          throw new Error('The import is taking longer than expected. Check Statements before uploading again.');
+        }
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        job = await api('/imports/jobs/' + encodeURIComponent(started.job_id));
+        if (job.status === 'done') break;
+        if (job.status === 'failed') throw new Error(job.detail || 'Import failed. Please retry.');
+        btn.textContent = 'Processing statement… you can leave this page and return later';
+      }
+      const results = job.results || [];
       const ok = results.filter((r) => r.ok), bad = results.filter((r) => !r.ok);
       if (bad.some((r) => r.needs_password)) $('#pwf', m.el).hidden = false;
       if (bad.length) $('#ierr', m.el).innerHTML = bad.map((r) => `<div class="err-box" role="alert"><b>${esc(r.filename)}</b><br>${esc(r.error)}</div>`).join('');
@@ -287,6 +348,7 @@ routes.import = async (main, [ids]) => {
         <div class="stat"><div class="label">Money out</div><div class="value">${money(sm.money_out)}</div></div></div>
         <p class="small muted" style="margin-top:12px">${fdate(sm.date_from)} to ${fdate(sm.date_to)} · read with ${esc({ columns: 'column detection', text: 'text matching', gpay: 'Google Pay reader', ai: 'AI' }[st.parser] || st.parser)}</p></div>
       ${st.warnings.map((w) => `<div class="warn-box">${esc(w)}</div>`).join('')}
+      ${st.source_type === 'card' ? `<div class="card" style="margin-bottom:12px"><h2>Credit card detected</h2><p class="small muted">${esc(st.card_meta?.name || st.account_name)} ${st.card_meta?.last4?'•••• '+esc(st.card_meta.last4):''} · ${st.card_meta?.limit_minor?money(st.card_meta.limit_minor)+' credit limit':'Credit limit unknown'}</p><p class="small muted">Imported into: <b>${esc(st.account_name)}</b></p><div class="row"><button class="btn sm primary" id="card-import-keep">Add as Credit Card / Keep Detected</button><select id="card-import-existing" aria-label="Choose existing credit card"><option value="">Choose Existing…</option>${S.accounts.filter(a=>a.type==='card').map(a=>`<option value="${a.id}" ${a.id===st.account_id?'selected':''}>${esc(a.name)} ${a.last4?'••'+esc(a.last4):''}</option>`).join('')}</select><button class="btn sm" id="card-import-switch">Use selected</button></div></div>` : ''}
       <div class="warn-box">Extracted text can be wrong, especially from scans. Compare a few rows with your statement before relying on the numbers. You can fix any row below.</div>
       ${sm.exact_duplicates ? `<div class="warn-box"><b>${sm.exact_duplicates} already imported.</b> These will be skipped automatically.</div>` : ''}
       ${sm.suspected_duplicates ? `<div class="warn-box"><b>${sm.suspected_duplicates} possible duplicates</b> of transactions in another account or statement (for example a bank payment also shown in Google Pay). They're kept out of your totals until you decide.</div>` : ''}
@@ -339,11 +401,31 @@ routes.import = async (main, [ids]) => {
       } catch (er) { fail(er); }
     };
     $('#addrow').onclick = () => editRow(null, show, id);
+    if(st.source_type==='card'){
+      const selected=$('#card-import-existing');
+      $('#card-import-keep').onclick=()=>toast('Detected credit card selected');
+      $('#card-import-switch').onclick=async()=>{
+        if(!selected.value){toast('Choose a credit card first');return;}
+        try{await api('/imports/'+id+'/card-account',{method:'PATCH',body:{account_id:+selected.value}});
+          await loadRef();show();
+        }catch(err){fail(err);}
+      };
+    }
     $('#imp-cancel').onclick = async () => { if (await confirmBox({ title: 'Discard this import?', body: 'The uploaded file and its rows will be deleted.', ok: 'Discard', danger: true })) { await api('/statements/' + id, { method: 'DELETE' }); next(true); } };
     $('#imp-ok').onclick = async () => {
       const b = $('#imp-ok'); b.disabled = true; b.textContent = 'Importing…';
       try {
-        const r = await api(`/imports/${id}/commit`, { method: 'POST' });
+        const queued = await api(`/imports/${id}/commit-job`, { method: 'POST' });
+        let status;
+        const deadline = Date.now() + 20 * 60 * 1000;
+        do {
+          if (Date.now() > deadline) throw new Error('Confirmation is taking longer than expected. Check Statements before retrying.');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          status = await api('/imports/jobs/' + encodeURIComponent(queued.job_id));
+          if (status.status === 'failed') throw new Error(status.detail || 'Confirmation failed.');
+          b.textContent = 'Saving transactions…';
+        } while (status.status !== 'done');
+        const r = status.commit_result;
         const bits = [`${r.imported} imported`]; if (r.already_imported) bits.push(`${r.already_imported} already there`); if (r.excluded) bits.push(`${r.excluded} excluded by your rules`); if (r.auto_classified) bits.push(`${r.auto_classified} auto-classified`); if (r.transfers_detected) bits.push(`${r.transfers_detected} looked like transfers between your accounts`);
         toast(bits.join(' · ')); await refreshBadge(); next(false);
       } catch (er) { fail(er); b.disabled = false; b.textContent = 'Try again'; }
