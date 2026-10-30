@@ -232,7 +232,7 @@ function accountEditor(account=null) {
       <div class="small muted">Only enter a balance from before your earliest imported card transaction; otherwise leave 0 to avoid counting it twice.</div></div>
       <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="card-save">Save account</button></div>`);
     $('[data-x]',m.el).onclick=()=>m.close();
-    const setType=()=>{const isCard=$('#card-type',m.el).value==='card';$('#card-limit-field',m.el).hidden=!isCard;$('.card-credit-field',m.el).forEach(x=>x.hidden=!isCard);};
+    const setType=()=>{const isCard=$('#card-type',m.el).value==='card';$('#card-limit-field',m.el).hidden=!isCard;$$('.card-credit-field',m.el).forEach(x=>x.hidden=!isCard);};
     $('#card-type',m.el).onchange=setType;setType();
     $('#card-save',m.el).onclick=async()=>{
       try{
