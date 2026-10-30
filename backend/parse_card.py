@@ -8,8 +8,18 @@ LAST4 = re.compile(r"(?:[xX*]{4}\s*){3}(\d{4})")
 def _text(page, i):
     return [line.text.strip() for line in group_lines(page, i)]
 
+# Adapter registry: add provider-specific readers without changing imports.
+CARD_READERS = {}
+
+def register_card_reader(name, detector, reader):
+    CARD_READERS[name] = (detector, reader)
+
 def detect_card(pages):
     if not pages: return None
+    for provider, entry in CARD_READERS.items():
+        metadata = entry[0](pages)
+        if metadata:
+            return {**metadata, "format": provider}
     top = "\n".join(_text(pages[0],0)[:55])
     if "Utkarsh Small Finance Bank" in top and ("super.money" in top.lower() or "total limit:" in top.lower()):
         m=LAST4.search(top)
@@ -33,6 +43,8 @@ def detect_card(pages):
 
 def parse_card(pages):
     info=detect_card(pages)
+    if info and info.get("format") in CARD_READERS:
+        return CARD_READERS[info["format"]][1](pages)
     if not info: return [],["Unsupported credit-card format"],{}
     rows=[]; warnings=[]; in_table=False; pending_purchase=None
     for pi,page in enumerate(pages):
