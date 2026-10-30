@@ -151,3 +151,5 @@ check("account deletion", c.post("/api/auth/delete-account", json={"password":"p
 check("after deletion session is dead", c.get("/api/auth/me").status_code == 401)
 check("login fails after deletion", c.post("/api/auth/login", json={"email":"t@e.st","password":"password123"}).status_code == 401)
 print("\n%d failure(s)" % len(fails), fails)
+if fails:
+    sys.exit(1)
