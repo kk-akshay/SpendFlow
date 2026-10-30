@@ -29,6 +29,7 @@ def detect_card(pages):
         due_line=next((line for line in top.splitlines() if re.search(r"\\b\\d{1,2}(?:st|nd|rd|th)?\\s+[A-Za-z]{3},?\\s+20\\d{2}\\s+₹",line)), "")
         due_values=re.findall(r"₹\\s*([\\d,]+\\.\\d{2})",due_line)
         due_amount=re.search(r"Total Amount Due\\s+₹\\s*([\\d,]+\\.\\d{2})",top,re.I)
+        fees_line=re.search(r"Fees, Interest and Taxes\\s+₹\\s*([\\d,]+\\.\\d{2})",top,re.I)
         minimum=re.search(r"Minimum Amount Due\s+₹\s*([\d,]+\.\d{2})",top,re.I)
         return {"name":"SuperMoney SuperCard", "last4":m.group(1) if m else None,
                 "limit_minor":to_minor(lim.group(1)) if lim else None,
@@ -38,7 +39,8 @@ def detect_card(pages):
                 "billing_end":dates[2] if len(dates)>2 else None,
                 "due_date":dates[3] if len(dates)>3 else None,
                 "amount_due_minor":to_minor(due_values[0]) if due_values else (to_minor(due_amount.group(1)) if due_amount else None),
-                "minimum_due_minor":to_minor(due_values[1]) if len(due_values)>1 else (to_minor(minimum.group(1)) if minimum else None)}
+                "minimum_due_minor":to_minor(due_values[1]) if len(due_values)>1 else (to_minor(minimum.group(1)) if minimum else None),
+                "fees_minor":to_minor(fees_line.group(1)) if fees_line else None}
     return None
 
 def parse_card(pages):
@@ -74,7 +76,7 @@ def parse_card(pages):
                     if a:
                         rows.append({"date":rows[-1]["date"],"description":"Fuel Surcharge",
                                      "amount_minor":to_minor(a.group(2)),"direction":"debit",
-                                     "flags":["Fuel surcharge shown separately"]})
+                                     "flags":["Fuel surcharge shown separately","Credit card fee"]})
                 continue
             iso=parse_date(" ".join(m.groups()))
             if not iso: continue
@@ -95,7 +97,7 @@ def parse_card(pages):
             refund=amt.group(1)=="-"
             rows.append({"date":iso,"description":description,"amount_minor":to_minor(amt.group(2)),
                          "direction":"credit" if refund or is_payment else "debit",
-                         "flags":["Credit card repayment"] if is_payment else (["Credit card refund"] if refund else [])})
+                         "flags":["Credit card repayment"] if is_payment else (["Credit card refund"] if refund else (["Credit card fee"] if re.search(r"(?i)\\b(fee|surcharge|interest|gst|tax|charge)\\b",description) else []))})
     if not rows: warnings.append("No credit-card transactions found; check the statement.")
     # Do not silently reconcile to the cover-page summary: expose any discrepancy.
     first="\n".join(_text(pages[0],0))
