@@ -30,11 +30,20 @@ def overview(db, uid, month=None):
         for st in statements:
             try: meta=json.loads(st["card_meta"] or "{}")
             except (ValueError,TypeError): meta={}
+            paid = 0
+            if meta.get("billing_start") and meta.get("billing_end"):
+                payment_rows=db.execute(
+                    f"SELECT t.amount_minor,t.flags FROM transactions t WHERE t.user_id=? AND t.account_id=? "
+                    f"AND t.direction='credit' AND t.date BETWEEN ? AND ? AND {ACTIVE}",
+                    (uid,card["id"],meta["billing_start"],meta["billing_end"])).fetchall()
+                paid=sum(t["amount_minor"] for t in payment_rows
+                         if "Credit card repayment" in (t["flags"] or "") or
+                         PAYMENT.search(t["flags"] or ""))
             if meta.get("due_date") or meta.get("amount_due_minor") is not None:
                 billing.append({"statement_id":st["id"],"statement_date":meta.get("statement_date"),
                     "billing_start":meta.get("billing_start"),"billing_end":meta.get("billing_end"),
                     "due_date":meta.get("due_date"),"amount_due_minor":meta.get("amount_due_minor"),
-                    "minimum_due_minor":meta.get("minimum_due_minor")})
+                    "minimum_due_minor":meta.get("minimum_due_minor"),"repayments_minor":paid})
         suggestions=[]
         # Card credits are repayment evidence. Never infer repayments from equal
         # amounts alone: require a card credit and a bank-side payment clue.
