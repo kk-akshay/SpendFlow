@@ -43,3 +43,8 @@ def test_unsupported_is_not_silently_treated_as_supercard():
     pages=fake_pages(["Example Bank", "All Transactions\n1st Sep, 2026 Payment - ₹100.00"])
     with patch.object(parse_card,"group_lines",side_effect=lambda page,i:page.lines):
         assert parse_card.detect_card(pages) is None
+
+if __name__ == "__main__":
+    test_supercard_repayments_refunds_wrapped_fuel_and_illustration_excluded()
+    test_unsupported_is_not_silently_treated_as_supercard()
+    print("Credit card parser checks passed")
