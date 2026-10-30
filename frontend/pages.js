@@ -379,8 +379,8 @@ routes.settings = async (main) => {
       ${sts.length ? `<div class="list">${sts.map((s) => `<div><div class="grow"><b class="ell">${esc(s.filename)}</b><div class="small muted">${esc(s.account_name)} · ${s.date_from ? fdate(s.date_from) + ' to ' + fdate(s.date_to) : ''} · ${s.txn_count} transactions${s.status === 'preview' ? ' · <span class="neg">not confirmed</span>' : ''}</div></div>
         ${s.status === 'preview' ? `<a class="btn sm" href="#/import/${s.id}">Review</a>` : `<a class="btn sm ghost" href="/api/statements/${s.id}/file" target="_blank" rel="noopener">View file</a>`}<button class="btn sm ghost danger" data-sdel="${s.id}">Delete</button></div>`).join('')}</div>` : '<p class="muted small">No statements uploaded yet.</p>'}</details>
     <div class="grid g2" style="margin-bottom:16px">
-      <details class="card settings-fold"><summary><b>Accounts</b><span class="small muted">${accs.length} total</span></summary><div class="row" style="justify-content:flex-end;margin:10px 0 6px"><button class="btn sm" id="new-card-account">+ Credit Card</button></div><div class="list">${accs.map((a) => `<div><div class="grow"><b>${esc(a.name)}</b><div class="small muted">${esc(a.type)}${a.last4 ? ' ••' + esc(a.last4) : ''} · ${a.txn_count} transactions${a.type==='card' ? ` · Monthly limit: ${a.card_monthly_limit_minor ? money(a.card_monthly_limit_minor) : 'Not set'}` : ''}</div></div><button class="btn sm ghost" data-aren="${a.id}" data-n="${esc(a.name)}">Edit</button><button class="btn sm ghost danger" data-adel="${a.id}" data-n="${esc(a.name)}">Delete</button></div>`).join('') || '<p class="muted small">Accounts appear when you import a statement.</p>'}</div></details>
-      <details class="card settings-fold"><summary><b>Categories</b><span class="small muted">${cats.length} total</span></summary><div class="row" style="justify-content:flex-end;margin:10px 0 6px"><button class="btn sm" id="addc">+ New</button></div><div class="list">${cats.map((c) => `<div class="category-compact-row">${catDot(c)}<span class="grow">${esc(c.name)}</span><span class="small muted">${c.uses}</span>${c.builtin ? '' : `<button class="btn sm ghost danger" data-cdel="${c.id}" data-n="${esc(c.name)}" data-u="${c.uses}">Delete</button>`}</div>`).join('')}</div></details></div>
+      <div class="card settings-shortcut"><div class="row" style="justify-content:space-between;gap:12px"><div><b>Accounts & credit cards</b><p class="small muted">Manage accounts, limits and repayments</p></div><a class="btn sm" href="#/accounts">Manage</a></div></div>
+      <details class="card settings-fold"><summary><b>Categories</b><span class="small muted">${cats.length} total</span></summary><div class="row" style="justify-content:flex-end;margin:10px 0 6px"><button class="btn sm" id="addc">+ New</button></div><div class="settings-category-tools"><input id="category-search" type="search" placeholder="Find a category…" aria-label="Search categories"><select id="category-kind" aria-label="Filter categories"><option value="all">All types</option><option value="expense">Spending</option><option value="income">Income</option><option value="savings">Savings</option><option value="transfer">Transfers</option></select></div><div class="settings-category-list" id="settings-category-list">${cats.map((c) => `<div class="category-compact-row" data-category-name="${esc(c.name.toLowerCase())}" data-category-kind="${esc(c.kind)}">${catDot(c)}<span class="grow">${esc(c.name)}</span><span class="small muted">${c.uses}</span>${c.builtin ? '' : `<button class="btn sm ghost danger" data-cdel="${c.id}" data-n="${esc(c.name)}" data-u="${c.uses}">Delete</button>`}</div>`).join('')}</div><p id="category-empty" class="small muted" hidden>No matching categories.</p></details></div>
     <details class="card settings-fold" style="margin-bottom:12px"><summary><b>Remembered classifications</b><span class="small muted">${classificationRules.length}</span></summary><p class="muted small">Exact merchant and direction matches only. Existing corrections are never reclassified.</p>
       <div class="list">${classificationRules.map(r=>`<div><span class="grow"><b>${esc(r.merchant_key)}</b><div class="small muted">${esc(r.direction)}</div></span><select data-rule-cat="${r.id}" style="width:auto">${cats.map(x=>`<option value="${x.id}" ${x.id===r.category_id?'selected':''}>${esc(x.name)}</option>`).join('')}</select><button class="btn sm danger" data-rule-del="${r.id}">Remove</button></div>`).join('')||'<p class="muted small">No saved classifications.</p>'}</div></details>
     <details class="card settings-fold" style="margin-bottom:12px"><summary><b>Future import exclusions</b><span class="small muted">${exclusions.length}</span></summary><p class="muted small">Removing a rule stops future exclusions; previously removed transactions can be restored from history.</p>
@@ -388,11 +388,23 @@ routes.settings = async (main) => {
     <details class="card settings-fold" style="margin-bottom:12px"><summary><b>Linked non-personal flows</b><span class="small muted">${flows.length}</span></summary><p class="muted small">Groups are excluded from personal spending and income without altering the source transactions.</p>
       <div class="list">${flows.map(g=>`<div><span class="grow"><b>${esc(g.kind.replaceAll('_',' '))}</b><div class="small muted">${g.transactions.length} transactions · ${g.transactions.map(t=>money(t.amount_minor)).join(', ')}</div></span><button class="btn sm danger" data-flow-del="${g.id}">Unlink</button></div>`).join('')||'<p class="muted small">No linked flows.</p>'}</div></details>
 
-    <div class="card" style="margin-bottom:12px"><h2 style="margin-bottom:6px">Export & data</h2><p class="muted small" style="margin-bottom:14px">Everything lives in this app's own database and upload folder. Nothing is shared.</p>
-      <div class="row"><a class="btn" href="/api/export.csv" download>Export all as CSV</a><button class="btn danger" id="wipe">Delete all statements &amp; transactions</button></div></div>
+    <details class="card settings-fold" style="margin-bottom:12px"><summary><b>Export & data</b></summary><h2 class="sr">Export & data</h2><p class="muted small" style="margin-bottom:14px">Everything lives in this app's own database and upload folder. Nothing is shared.</p>
+      <div class="row"><a class="btn" href="/api/export.csv" download>Export all as CSV</a><button class="btn danger" id="wipe">Delete all statements &amp; transactions</button></div></details>
     <div class="card" style="margin-bottom:12px"><h2>Profile & security</h2><p class="small muted">Signed in as <b>${esc(S.user.email)}</b></p><div class="row" style="margin-top:12px"><button class="btn sm" id="change-password">Change password</button><button class="btn sm" id="out">Sign out</button></div></div>
     <details class="card settings-fold"><summary><b>Delete account</b></summary><p class="small muted">Permanently delete your account and its data.</p><button class="btn danger" id="delacc">Delete my account</button></details>`;
-  $('#new-card-account').onclick = () => accountEditor();
+  const filterCategories = () => {
+    const search = $('#category-search').value.trim().toLowerCase();
+    const kind = $('#category-kind').value;
+    let shown = 0;
+    $('.category-compact-row', $('#settings-category-list')).forEach(row => {
+      const visible = row.dataset.categoryName.includes(search) && (kind === 'all' || row.dataset.categoryKind === kind);
+      row.hidden = !visible;
+      if (visible) shown++;
+    });
+    $('#category-empty').hidden = shown > 0;
+  };
+  $('#category-search').oninput = filterCategories;
+  $('#category-kind').onchange = filterCategories;
   $('#imp').onclick = () => openImport();
   $$('[data-rule-cat]').forEach(el => { el.onchange = async () => { try { const rule = classificationRules.find(r=>r.id===+el.dataset.ruleCat); const newCat=cat(+el.value); await api('/classification-rules/'+rule.id,{method:'PATCH',body:{category_id:newCat.id,type:newCat.kind==='income'?'income':newCat.kind==='transfer'?'transfer':'expense'}}); toast('Rule updated'); } catch(e){fail(e);} }; });
   $('#change-password').onclick = () => {
@@ -441,12 +453,28 @@ routes.settings = async (main) => {
 routes.accounts = async (main) => {
   const accs = await api('/accounts');
   S.accounts = accs;
-  main.innerHTML = `<div class="head"><div><h1>Accounts</h1><p class="sub">Your bank accounts and credit cards in one place</p></div><button class="btn primary sm" id="hub-add">+ Add account</button></div>
-    <div class="card" style="margin-bottom:12px"><div class="row" style="justify-content:space-between"><div><h2>Credit Cards</h2><p class="small muted">Utilization, limits and bill repayments</p></div><a class="btn sm" href="#/cards">View cards</a></div></div>
-    <details class="card settings-fold" open><summary><b>All accounts</b><span class="small muted">${accs.length} total</span></summary><div class="list" style="margin-top:12px">
-      ${accs.map(a=>`<div><span class="grow"><b>${esc(a.name)}</b><div class="small muted">${esc(a.type)}${a.last4?' ••'+esc(a.last4):''} · ${a.txn_count} transactions</div></span><button class="btn sm ghost" data-hub-edit="${a.id}">Edit</button></div>`).join('')||'<p class="small muted">No accounts yet.</p>'}</div></details>`;
-  $('#hub-add').onclick=()=>accountEditor();
-  main.onclick=e=>{const b=e.target.closest('[data-hub-edit]');if(b)accountEditor(accs.find(a=>a.id===+b.dataset.hubEdit));};
+  const cards = accs.filter(a => a.type === 'card');
+  const banks = accs.filter(a => a.type !== 'card');
+  const accountRows = rows => rows.map(a => `<div class="account-hub-row"><span class="grow"><b>${esc(a.name)}</b><div class="small muted">${esc(a.type)}${a.last4?' ••'+esc(a.last4):''} · ${a.txn_count} transactions${a.type==='card'?' · Limit: '+(a.card_monthly_limit_minor?money(a.card_monthly_limit_minor):'Not set'):''}</div></span><button class="btn sm ghost" data-hub-edit="${a.id}">Edit</button><button class="btn sm ghost danger" data-hub-delete="${a.id}">Delete</button></div>`).join('');
+  main.innerHTML = `<div class="head"><div><h1>Accounts</h1><p class="sub">Banks and credit cards, in one place</p></div><button class="btn primary sm" id="hub-add">+ Add account</button></div>
+    <details class="card settings-fold" open style="margin-bottom:12px"><summary><b>Credit Cards</b><span class="small muted">${cards.length} cards</span></summary>
+      <div class="row" style="justify-content:flex-end;gap:8px;margin:12px 0"><button class="btn sm" id="hub-add-card">+ Add card</button><a class="btn sm primary" href="#/cards">View utilization & bills</a></div>
+      <div class="account-hub-list">${accountRows(cards)||'<p class="small muted">No credit cards yet. Add a card to track its limit and repayments.</p>'}</div></details>
+    <details class="card settings-fold" open><summary><b>Bank & other accounts</b><span class="small muted">${banks.length} accounts</span></summary>
+      <div class="account-hub-list">${accountRows(banks)||'<p class="small muted">No bank accounts yet.</p>'}</div></details>`;
+  $('#hub-add').onclick = () => accountEditor();
+  $('#hub-add-card').onclick = () => accountEditor();
+  main.onclick = async e => {
+    const edit=e.target.closest('[data-hub-edit]');
+    const del=e.target.closest('[data-hub-delete]');
+    if(edit) accountEditor(accs.find(a=>a.id===+edit.dataset.hubEdit));
+    if(del) {
+      const account=accs.find(a=>a.id===+del.dataset.hubDelete);
+      if(account && await confirmBox({title:`Delete “${account.name}”?`,body:'This also deletes its statements and transactions. This can’t be undone.',ok:'Delete account',danger:true})) {
+        try { await api('/accounts/'+account.id,{method:'DELETE'}); await loadRef(); await refreshBadge(); route(); } catch(err) { fail(err); }
+      }
+    }
+  };
 };
 
 /* Daily calendar, reusing the existing transaction editor. */
