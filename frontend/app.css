@@ -393,3 +393,19 @@ input[type="date"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.8}
 .category-compact-row {gap:7px!important;min-height:34px;padding:5px 0!important}
 .category-compact-row .btn {padding:4px 8px}
 @media(max-width:760px){.settings-fold {margin-bottom:10px!important}.category-compact-row {flex-wrap:nowrap}}
+
+/* Compact Settings and Accounts hub */
+.settings-category-tools{display:flex;gap:8px;align-items:center;margin:12px 0 8px}
+.settings-category-tools input{flex:1;min-width:0}
+.settings-category-tools select{flex:0 0 auto;width:auto;max-width:42%}
+.settings-category-list{max-height:280px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:12px}
+.settings-category-list .category-compact-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);font-size:13px;min-height:38px}
+.settings-category-list .category-compact-row:last-child{border-bottom:0}
+.settings-category-list .category-compact-row[hidden]{display:none}
+.settings-category-list .category-compact-row .btn{min-height:30px;padding:4px 8px}
+.settings-shortcut{display:flex;align-items:center}
+.settings-shortcut>.row{width:100%}
+.account-hub-list{display:grid;gap:0;margin-top:8px}
+.account-hub-row{display:flex;align-items:center;gap:8px;min-width:0;padding:12px 0;border-top:1px solid var(--line)}
+.account-hub-row .grow{min-width:0;overflow-wrap:anywhere}
+@media(max-width:560px){.settings-category-tools{flex-wrap:wrap}.settings-category-tools select{max-width:none;width:100%}.account-hub-row{flex-wrap:wrap}.account-hub-row .grow{flex-basis:100%}}
