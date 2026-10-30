@@ -1,4 +1,7 @@
 """Regression tests for credit-card statement safety. No private statements in source control."""
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from types import SimpleNamespace
 from unittest.mock import patch
 from backend import parse_card
