@@ -220,7 +220,7 @@ async function openTxn(id, done) {
 }
 
 function accountEditor(account=null) {
-    const m=modal(`<h2>${account?'Edit account':'Add credit card'}</h2><div id="card-err"></div>
+    const m=modal(`<h2>${account?'Edit account':'Add account'}</h2><div id="card-err"></div>
       <div class="field"><label>Name</label><input id="card-name" maxlength="60" value="${esc(account?.name || '')}" placeholder="SuperMoney Credit Card"></div>
       <div class="field"><label>Account type</label><select id="card-type">
         ${[['card','Credit Card'],['bank','Bank'],['upi','UPI'],['cash','Cash']].map(([v,n])=>`<option value="${v}" ${(account?.type || 'card')===v?'selected':''}>${n}</option>`).join('')}</select></div>
