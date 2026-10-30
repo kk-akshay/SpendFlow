@@ -5,7 +5,7 @@ shell=(root/"shell.js").read_text(encoding="utf-8")
 app=(root/"app.js").read_text(encoding="utf-8")
 css=(root/"app.css").read_text(encoding="utf-8")
 html=(root/"index.html").read_text(encoding="utf-8")
-assert '<script src="/shell.js"></script>' in html
+assert '<script src="/shell.js' in html and ('/shell.js"></script>' in html or '/shell.js?v=' in html)
 assert 'href="/brand.svg"' in html
 assert 'fill="currentColor"' in (root/"brand.svg").read_text()
 for name in ("dashboard","transactions","groups","calendar"):
