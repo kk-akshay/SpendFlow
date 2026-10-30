@@ -66,7 +66,7 @@ routes.dashboard = async (main, [month]) => {
   const unc = d.uncategorized;
   main.innerHTML = `<div class="head"><div><h1>${fmonth(d.month)}</h1><p class="sub">Cash flow and spending</p></div>
     <div class="row"><button class="btn sm" id="pm" ${i <= 0 ? 'disabled' : ''} aria-label="Previous month">←</button>
-      <select id="msel" style="width:auto" aria-label="Month">${d.months.map((m) => `<option value="${m}" ${m === d.month ? 'selected' : ''}>${fmonth(m)}</option>`).join('')}</select>
+      <div id="dashboard-month-control"></div>
       <button class="btn sm" id="nm" ${i >= d.months.length - 1 ? 'disabled' : ''} aria-label="Next month">→</button></div></div>
     ${unc.count ? `<div class="card flat row" style="justify-content:space-between;margin-bottom:16px;background:var(--accent-soft)"><div><b>${unc.count} transaction${unc.count > 1 ? 's' : ''} to review</b><div class="small muted">Totals are estimates until each one has a category.</div></div><a class="btn primary" href="#/review">Continue reviewing</a></div>` : ''}
     ${d.duplicates ? `<div class="warn-box row" style="justify-content:space-between"><span>${d.duplicates} possible duplicate${d.duplicates > 1 ? 's' : ''} left out of totals.</span><a href="#/transactions/duplicates">Check them</a></div>` : ''}
@@ -86,17 +86,24 @@ routes.dashboard = async (main, [month]) => {
       <div class="card"><h2 style="margin-bottom:6px">Accounts · ${fmonth(d.month, false)}</h2><div class="list">${d.accounts.map((a) => `<div><div class="grow"><b>${esc(a.name)}</b><div class="small muted">In ${money(a.income)} · Out ${money(a.expense)}${a.transfer_in || a.transfer_out ? ` · Transfers ${money(a.transfer_in - a.transfer_out, { sign: true })}` : ''}</div></div></div>`).join('') || '<p class="muted">No accounts.</p>'}</div>
         ${d.recurring.count ? `<div class="row small" style="margin-top:12px;justify-content:space-between"><span class="muted">${d.recurring.count} recurring bills</span><b>${money(d.recurring.monthly_total_minor)}/mo</b></div>` : ''}</div></div>`;
   const nav = (m) => go('#/dashboard/' + m);
-  $('#msel').onchange = (e) => nav(e.target.value); $('#pm').onclick = () => nav(d.months[i - 1]); $('#nm').onclick = () => nav(d.months[i + 1]);
+  $('#dashboard-month-control').append(monthSelector(d.month, nav, {label:'Dashboard month'}));
+  $('#pm').onclick = () => nav(d.months[i - 1]); $('#nm').onclick = () => nav(d.months[i + 1]);
   main.onclick = (e) => { const r = e.target.closest('[data-txn]'); if (r) openTxn(+r.dataset.txn, () => route()); };
 };
 
 function txnRow(t) {
-  const inflow = t.direction === 'credit', c = t.is_split ? 'Split' : t.category_name;
-  return `<div class="txn" data-txn="${t.id}" tabindex="0" role="button">
-    <span class="dot" style="background:var(--shade-3);width:12px;height:12px"></span>
-    <div class="grow"><div class="ell"><b>${esc(t.merchant || t.description.slice(0, 40) || 'Unknown')}</b>${t.dup_status === 'suspected' ? ' <span class="pill warn">Possible duplicate</span>' : ''}</div>
-      <div class="small muted ell">${fdate(t.date, false)} · ${esc(c || (t.status === 'skipped' ? 'Skipped' : 'Needs a category'))}${t.type === 'transfer' ? ' · Transfer' : ''}${t.recurring ? ' · ↻' : ''}</div></div>
-    <b class="num ${t.type === 'transfer' ? 'muted' : inflow ? 'amount-in' : 'amount-out'}">${inflow ? '↑ +' : '↓ −'}${money(t.amount_minor)}</b></div>`;
+  const inflow = t.direction === 'credit';
+  const category = t.is_split ? 'Split' : (t.category_name || (t.status === 'skipped' ? 'Skipped' : 'Needs a category'));
+  const details = (t.type === 'transfer' ? ' · Transfer' : '') + (t.recurring ? ' · ↻' : '');
+  const merchant = t.merchant || (t.description || '').slice(0, 60) || 'Unknown';
+  return `<div class="txn history-txn" data-txn="${t.id}" tabindex="0" role="button" aria-label="Open ${esc(merchant)} transaction">
+    <span class="dot history-txn-dot" aria-hidden="true"></span>
+    <div class="history-txn-name"><div class="history-txn-merchant ell"><b>${esc(merchant)}</b>${t.dup_status === 'suspected' ? ' <span class="pill warn">Possible duplicate</span>' : ''}</div>
+      <div class="history-txn-mobile-meta small muted">${fdate(t.date, false)} · ${esc(category)}${details}</div></div>
+    <span class="history-txn-date small muted">${fdate(t.date)}</span>
+    <span class="history-txn-category small muted">${esc(category)}${details}</span>
+    <b class="history-txn-amount num ${t.type === 'transfer' ? 'muted' : inflow ? 'amount-in' : 'amount-out'}">${inflow ? '↑ +' : '↓ −'}${money(t.amount_minor)}</b>
+    <span class="history-txn-chevron" aria-hidden="true">›</span></div>`;
 }
 function budgetBars(b, compact) {
   const rows = [...(b.overall ? [{ category_name: 'All spending', category_color: 'var(--accent)', ...b.overall }] : []), ...b.items];
@@ -126,23 +133,26 @@ async function openTxn(id, done) {
       <div class="field"><label for="tm">Merchant</label><input id="tm" value="${esc(t.merchant)}" maxlength="80"></div><div class="field"><label for="td">Date</label><input id="td" type="date" value="${esc(t.date)}"></div>
       <div class="field"><label for="ta">Amount</label><input id="ta" inputmode="decimal" value="${(t.amount_minor / 100).toFixed(2)}" ${t.is_split ? 'disabled' : ''}></div>
       <div class="field"><label for="tdir">Direction</label><select id="tdir"><option value="debit" ${t.direction === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${t.direction === 'credit' ? 'selected' : ''}>Money in</option></select></div></div></details>
-    <label class="check small"><input type="checkbox" id="tremember"> Remember category and type for future imports</label>
-    <div class="foot" style="justify-content:space-between"><div class="row"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button><button class="btn sm" id="tperson">Track with person</button></div><div class="row"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save</button></div></div>`);
+    <div class="transaction-editor-toolbar" role="group" aria-label="Transaction actions">
+      <div class="txn-editor-buttons"><button class="btn sm danger" id="tdel">Remove</button><button class="btn sm" id="trev">Send to review</button><button class="btn sm" id="tflow">Link flow</button><button class="btn sm" id="tperson">Track with person</button></div>
+      <div class="txn-editor-confirm"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save changes</button></div>
+    </div>
+    `);
   $('#txn-create-tag',m.el).onclick=()=>{
     const dialog=modal('<h2>New tag</h2><div class="field"><label>Name</label><input id="tag-new-name" maxlength="80"></div><div class="field"><label>Type</label><select id="tag-new-kind"><option value="trip">Trip</option><option value="person">Person / beneficiary</option><option value="custom">Other</option></select></div><div id="tag-new-err"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tag-new-save">Create</button></div>');
     $('[data-x]',dialog.el).onclick=()=>dialog.close();
     $('#tag-new-save',dialog.el).onclick=async()=>{
       try{
         const tag=await api('/tags',{method:'POST',body:{name:$('#tag-new-name',dialog.el).value,kind:$('#tag-new-kind',dialog.el).value}});
-        if(!$('[data-assign-tag="'+tag.id+'"]',m.el).length)$('#txn-create-tag',m.el).insertAdjacentHTML('beforebegin','<label class="check small"><input type="checkbox" checked data-assign-tag="'+tag.id+'" style="width:16px;height:16px"> '+esc(tag.name)+'</label>');
+        if(!$('[data-assign-tag="'+tag.id+'"]',m.el))$('#txn-create-tag',m.el).insertAdjacentHTML('beforebegin','<label class="check small"><input type="checkbox" checked data-assign-tag="'+tag.id+'" style="width:16px;height:16px"> '+esc(tag.name)+'</label>');
         else $('[data-assign-tag="'+tag.id+'"]',m.el).checked=true;
         dialog.close();
       }catch(e){$('#tag-new-err',dialog.el).textContent=e.message;}
     };
   };
-  $('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
+  $$('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
   $('[data-x]', m.el).onclick = () => m.close();
-  const patch = async (body, msg, saveTags = false) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); if(saveTags) await api('/transactions/' + id + '/tags',{method:'PUT',body:{tag_ids:$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}}); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
+  const patch = async (body, msg, saveTags = false) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); if(saveTags) await api('/transactions/' + id + '/tags',{method:'PUT',body:{tag_ids:$$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}}); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
   $('#tperson',m.el).onclick=()=>{m.close();personLinkDialog(id,done);};
   $('#tflow', m.el).onclick = async () => {
@@ -209,6 +219,36 @@ async function openTxn(id, done) {
   };
 }
 
+function accountEditor(account=null) {
+    const m=modal(`<h2>${account?'Edit account':'Add account'}</h2><div id="card-err"></div>
+      <div class="field"><label>Name</label><input id="card-name" maxlength="60" value="${esc(account?.name || '')}" placeholder="SuperMoney Credit Card"></div>
+      <div class="field"><label>Account type</label><select id="card-type">
+        ${[['card','Credit Card'],['bank','Bank'],['upi','UPI'],['cash','Cash']].map(([v,n])=>`<option value="${v}" ${(account?.type || 'card')===v?'selected':''}>${n}</option>`).join('')}</select></div>
+      <div class="field"><label>Last 4 digits (optional)</label><input id="card-last4" maxlength="4" inputmode="numeric" value="${esc(account?.last4||'')}"></div>
+      <div class="field" id="card-limit-field"><label>Monthly card spending limit (₹)</label>
+      <input id="card-limit" inputmode="decimal" value="${account?.card_monthly_limit_minor ? (account.card_monthly_limit_minor/100).toFixed(2) : ''}" placeholder="e.g. 20000">
+      <div class="small muted">Optional monthly spending budget (does not reset when you repay).</div></div>
+      <div class="field card-credit-field"><label>Card credit limit (₹)</label><input id="credit-limit" inputmode="decimal" value="${account?.card_credit_limit_minor ? (account.card_credit_limit_minor/100).toFixed(2) : ''}" placeholder="e.g. 50000"></div>
+      <div class="field card-credit-field"><label>Opening outstanding (₹, optional)</label><input id="opening-outstanding" inputmode="decimal" value="${account?.card_opening_outstanding_minor ? (account.card_opening_outstanding_minor/100).toFixed(2) : ''}" placeholder="0">
+      <div class="small muted">Only enter a balance from before your earliest imported card transaction; otherwise leave 0 to avoid counting it twice.</div></div>
+      <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="card-save">Save account</button></div>`);
+    $('[data-x]',m.el).onclick=()=>m.close();
+    const setType=()=>{const isCard=$('#card-type',m.el).value==='card';$('#card-limit-field',m.el).hidden=!isCard;$$('.card-credit-field',m.el).forEach(x=>x.hidden=!isCard);};
+    $('#card-type',m.el).onchange=setType;setType();
+    $('#card-save',m.el).onclick=async()=>{
+      try{
+        const body={name:$('#card-name',m.el).value.trim(),type:$('#card-type',m.el).value,
+          last4:$('#card-last4',m.el).value.trim()||null,
+          card_monthly_limit_minor:$('#card-type',m.el).value==='card'?toMinor($('#card-limit',m.el).value||'0'):0,
+          card_credit_limit_minor:$('#card-type',m.el).value==='card'?toMinor($('#credit-limit',m.el).value||'0'):0,
+          card_opening_outstanding_minor:$('#card-type',m.el).value==='card'?toMinor($('#opening-outstanding',m.el).value||'0'):0};
+        if(!body.name)throw new Error('Enter an account name.');
+        await api(account?'/accounts/'+account.id:'/accounts',{method:account?'PATCH':'POST',body});
+        m.close();await loadRef();route();
+      }catch(e){$('#card-err',m.el).textContent=e.message;}
+    };
+}
+
 /* ---------- history ---------- */
 routes.transactions = async (main, [pre]) => {
   const f = { q: '', category: '', account: '', status: '', type: '', from: '', to: '', min: '', max: '', sort: 'date_desc', page: 1, dup: '' };
@@ -217,7 +257,7 @@ routes.transactions = async (main, [pre]) => {
   else if (pre === 'uncategorized') f.category = 'uncategorized';
   else if (pre && pre.startsWith('cat-')) { const [, c, mo] = pre.split('-').concat([]); f.category = c === 'uncategorized' ? 'uncategorized' : c; if (mo) { const y = pre.split('-')[2], mm = pre.split('-')[3]; f.from = `${y}-${mm}-01`; f.to = `${y}-${mm}-31`; } }
   let selected = new Set(), data = null, timer;
-  main.innerHTML = `<div class="head"><div><h1>${f.dup ? 'Possible duplicates' : 'Transactions'}</h1><p class="sub" id="sub"></p></div><div class="row"><a class="btn sm" href="/api/export.csv" download>Export CSV</a><button class="btn primary sm" id="imp">Import</button></div></div>
+  main.innerHTML = `<div class="head"><div><h1>${f.dup ? 'Possible duplicates' : 'Transactions'}</h1><p class="sub" id="sub"></p></div><div class="row"><button class="btn primary sm" id="imp">Import</button></div></div>
     <div id="dupbox"></div><div class="row" style="margin-bottom:12px"><button class="btn sm" id="add-manual">+ Add transaction</button><a class="btn sm" href="#/calendar">Calendar</a><button class="btn sm" id="show-removed">Removed transactions</button></div>
     <div class="card flat" style="margin-bottom:16px"><div class="grid g3" style="margin-bottom:10px"><input id="q" type="search" placeholder="Search merchant, note, amount…" aria-label="Search" value="${esc(f.q)}">
       <select id="fcat" aria-label="Category"><option value="">All categories</option><option value="uncategorized">Needs a category</option>${S.cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
@@ -228,7 +268,7 @@ routes.transactions = async (main, [pre]) => {
         <label class="check"><input type="checkbox" id="frec"> Recurring only</label>
         <div><label for="ffrom">From</label><input type="date" id="ffrom" value="${esc(f.from.replace(/-31$/, '-01'))}"></div><div><label for="fto">To</label><input type="date" id="fto"></div>
         <div class="row" style="flex-wrap:nowrap"><input id="fmin" inputmode="decimal" placeholder="Min ₹" aria-label="Minimum amount"><input id="fmax" inputmode="decimal" placeholder="Max ₹" aria-label="Maximum amount"></div></div></details></div>
-    <div id="list"></div><div id="selbar"></div>`;
+    <div id="selbar" aria-live="polite"></div><div id="list"></div>`;
   $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
   $('#imp').onclick = () => openImport();
   $('#add-manual').onclick = () => manualTransaction(todayIso(), load);
@@ -247,8 +287,8 @@ routes.transactions = async (main, [pre]) => {
   function draw() {
     $('#sub').textContent = `${data.total} transaction${data.total === 1 ? '' : 's'} · in ${money(data.money_in)} · out ${money(data.money_out)}`;
     if (f.dup) loadDups();
-    if (!data.items.length) { $('#list').innerHTML = `<div class="empty card"><div class="big">🔍</div><h2>${f.dup ? 'No duplicates to check' : 'Nothing matches'}</h2><p>${f.dup ? 'Nice and tidy.' : 'Try clearing a filter, or import a statement.'}</p></div>`; return; }
-    $('#list').innerHTML = `<div class="card"><div class="list">${data.items.map((t) => `<div class="row" style="flex-wrap:nowrap">${t.removed_at ? `<button class="btn sm" data-restore="${t.id}">Restore</button>` : ''}<input type="checkbox" data-sel="${t.id}" style="width:18px;min-height:0;flex:none" aria-label="Select" ${selected.has(t.id) ? 'checked' : ''}><div style="flex:1;min-width:0">${txnRow(t)}</div></div>`).join('')}</div>
+    if (!data.items.length) { $('#list').innerHTML = `<div class="empty card"><div class="big">🔍</div><h2>${f.dup ? 'No duplicates to check' : 'Nothing matches'}</h2><p>${f.dup ? 'Nice and tidy.' : 'Try clearing a filter, or import a statement.'}</p></div>`; selbar(); return; }
+    $('#list').innerHTML = `<div class="card"><div class="list">${data.items.map((t) => `<div class="history-entry">${t.removed_at ? `<button class="btn sm" data-restore="${t.id}">Restore</button>` : ''}<input type="checkbox" class="history-select" data-sel="${t.id}" aria-label="Select ${esc(t.merchant || 'transaction')}" ${selected.has(t.id) ? 'checked' : ''}><div class="history-entry-body">${txnRow(t)}</div></div>`).join('')}</div>
       ${data.pages > 1 ? `<div class="row" style="justify-content:center;margin-top:14px"><button class="btn sm" id="pp" ${f.page <= 1 ? 'disabled' : ''}>Previous</button><span class="small muted">Page ${data.page} of ${data.pages}</span><button class="btn sm" id="np" ${f.page >= data.pages ? 'disabled' : ''}>Next</button></div>` : ''}</div>`;
     $('#pp') && ($('#pp').onclick = () => { f.page--; load(); }); $('#np') && ($('#np').onclick = () => { f.page++; load(); });
     selbar();
@@ -263,8 +303,9 @@ routes.transactions = async (main, [pre]) => {
   }
   const bulkDup = async (action) => { try { await api('/duplicates/resolve-all', { method: 'POST', body: { action } }); toast('Done'); refreshBadge(); load(); } catch (e) { fail(e); } };
   function selbar() {
-    $('#selbar').innerHTML = selected.size ? `<div class="sel-bar"><b>${selected.size} selected</b><select id="bcat" style="width:auto;background:transparent;color:inherit;border-color:rgba(255,255,255,.3)" aria-label="Set category"><option value="">Set category…</option>${S.cats.map((c) => `<option style="color:#000" value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
-      <button class="btn sm" data-b="pending">Send to review</button><button class="btn sm" data-b="delete">Remove</button><button class="btn sm" data-b="clear">Clear</button></div>` : '';
+    $('#selbar').innerHTML = selected.size ? `<div class="sel-bar" role="toolbar" aria-label="Selected transaction actions"><b>${selected.size} selected</b>
+      <div class="sel-bar-actions"><select id="bcat" aria-label="Set category"><option value="">Set category…</option>${S.cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+      <button class="btn sm" data-b="pending">Send to review</button><button class="btn sm" data-b="delete">Remove</button><button class="btn sm" data-b="clear">Clear</button></div></div>` : '';
     const bc = $('#bcat'); bc && (bc.onchange = () => bulk('categorize', { category_id: +bc.value }));
     $$('[data-b]').forEach((b) => (b.onclick = async () => { const a = b.dataset.b; if (a === 'clear') { selected.clear(); draw(); } else if (a === 'delete') { if (await confirmBox({ title: `Delete ${selected.size} transactions?`, body: 'Only the selected transactions will be hidden. Their records remain recoverable.', ok: 'Delete', danger: true })) bulk('delete'); } else bulk(a); }));
   }
@@ -333,23 +374,37 @@ routes.plan = async (main) => {
 routes.settings = async (main) => {
   const [sts, accs, cats, exclusions, classificationRules, flows] = await Promise.all([api('/statements'), api('/accounts'), api('/categories'), api('/exclusions'), api('/classification-rules'), api('/flows')]);
   S.accounts = accs; S.cats = cats;
-  main.innerHTML = `<div class="head"><div><h1>Settings</h1><p class="sub">${esc(S.user.email)}</p></div><button class="btn" id="out">Sign out</button></div>
-    <div class="card" style="margin-bottom:16px"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Statements</h2><button class="btn sm primary" id="imp">Import</button></div>
+  main.innerHTML = `<div class="head"><div><h1>Settings</h1><p class="sub">Manage your data and preferences</p></div></div>
+    <details class="card settings-fold" style="margin-bottom:12px"><summary><b>Statements</b><span class="small muted">${sts.length} files</span></summary><div class="row" style="justify-content:flex-end;margin:10px 0 6px"><button class="btn sm primary" id="imp">Import</button></div>
       ${sts.length ? `<div class="list">${sts.map((s) => `<div><div class="grow"><b class="ell">${esc(s.filename)}</b><div class="small muted">${esc(s.account_name)} · ${s.date_from ? fdate(s.date_from) + ' to ' + fdate(s.date_to) : ''} · ${s.txn_count} transactions${s.status === 'preview' ? ' · <span class="neg">not confirmed</span>' : ''}</div></div>
-        ${s.status === 'preview' ? `<a class="btn sm" href="#/import/${s.id}">Review</a>` : `<a class="btn sm ghost" href="/api/statements/${s.id}/file" target="_blank" rel="noopener">View file</a>`}<button class="btn sm ghost danger" data-sdel="${s.id}">Delete</button></div>`).join('')}</div>` : '<p class="muted small">No statements uploaded yet.</p>'}</div>
+        ${s.status === 'preview' ? `<a class="btn sm" href="#/import/${s.id}">Review</a>` : `<a class="btn sm ghost" href="/api/statements/${s.id}/file" target="_blank" rel="noopener">View file</a>`}<button class="btn sm ghost danger" data-sdel="${s.id}">Delete</button></div>`).join('')}</div>` : '<p class="muted small">No statements uploaded yet.</p>'}</details>
     <div class="grid g2" style="margin-bottom:16px">
-      <div class="card"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Accounts</h2></div><div class="list">${accs.map((a) => `<div><div class="grow"><b>${esc(a.name)}</b><div class="small muted">${esc(a.type)}${a.last4 ? ' ••' + esc(a.last4) : ''} · ${a.txn_count} transactions</div></div><button class="btn sm ghost" data-aren="${a.id}" data-n="${esc(a.name)}">Rename</button><button class="btn sm ghost danger" data-adel="${a.id}" data-n="${esc(a.name)}">Delete</button></div>`).join('') || '<p class="muted small">Accounts appear when you import a statement.</p>'}</div></div>
-      <div class="card"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Categories</h2><button class="btn sm" id="addc">+ New</button></div><div class="list">${cats.map((c) => `<div>${catDot(c)}<span class="grow">${esc(c.name)}</span><span class="small muted">${c.uses}</span>${c.builtin ? '' : `<button class="btn sm ghost danger" data-cdel="${c.id}" data-n="${esc(c.name)}" data-u="${c.uses}">Delete</button>`}</div>`).join('')}</div></div></div>
-    <div class="card" style="margin-bottom:16px"><h2>Remembered classifications</h2><p class="muted small">Exact merchant and direction matches only. Existing corrections are never reclassified.</p>
-      <div class="list">${classificationRules.map(r=>`<div><span class="grow"><b>${esc(r.merchant_key)}</b><div class="small muted">${esc(r.direction)}</div></span><select data-rule-cat="${r.id}" style="width:auto">${cats.map(x=>`<option value="${x.id}" ${x.id===r.category_id?'selected':''}>${esc(x.name)}</option>`).join('')}</select><button class="btn sm danger" data-rule-del="${r.id}">Remove</button></div>`).join('')||'<p class="muted small">No saved classifications.</p>'}</div></div>
-    <div class="card" style="margin-bottom:16px"><h2>Future import exclusions</h2><p class="muted small">Removing a rule stops future exclusions; previously removed transactions can be restored from history.</p>
-      <div class="list">${exclusions.map(r=>`<div><span class="grow"><b>${esc(r.merchant_key)}</b><div class="small muted">${esc(r.account_name)} · ${esc(r.direction)} · ${money(r.amount_minor)}</div></span><button class="btn sm danger" data-exclusion-del="${r.id}">Remove</button></div>`).join('')||'<p class="muted small">No exclusion rules.</p>'}</div></div>
-    <div class="card" style="margin-bottom:16px"><h2>Linked non-personal flows</h2><p class="muted small">Groups are excluded from personal spending and income without altering the source transactions.</p>
-      <div class="list">${flows.map(g=>`<div><span class="grow"><b>${esc(g.kind.replaceAll('_',' '))}</b><div class="small muted">${g.transactions.length} transactions · ${g.transactions.map(t=>money(t.amount_minor)).join(', ')}</div></span><button class="btn sm danger" data-flow-del="${g.id}">Unlink</button></div>`).join('')||'<p class="muted small">No linked flows.</p>'}</div></div>
-    <div class="card" style="margin-bottom:16px"><h2>Account security</h2><p class="muted small">Change your password using your current password. You will need to sign in again afterwards.</p><button class="btn sm" id="change-password">Change password</button></div>
-    <div class="card" style="margin-bottom:16px"><h2 style="margin-bottom:6px">Appearance</h2><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div>
-    <div class="card"><h2 style="margin-bottom:6px">Your data</h2><p class="muted small" style="margin-bottom:14px">Everything lives in this app's own database and upload folder. Nothing is shared.</p>
-      <div class="row"><a class="btn" href="/api/export.csv" download>Export all as CSV</a><button class="btn danger" id="wipe">Delete all statements &amp; transactions</button><button class="btn danger" id="delacc">Delete my account</button></div></div>`;
+      <div class="card settings-shortcut"><div class="row" style="justify-content:space-between;gap:12px"><div><b>Accounts & credit cards</b><p class="small muted">Manage accounts, limits and repayments</p></div><a class="btn sm" href="#/accounts">Manage</a></div></div>
+      <details class="card settings-fold"><summary><b>Categories</b><span class="small muted">${cats.length} total</span></summary><div class="row" style="justify-content:flex-end;margin:10px 0 6px"><button class="btn sm" id="addc">+ New</button></div><div class="settings-category-tools"><input id="category-search" type="search" placeholder="Find a category…" aria-label="Search categories"><select id="category-kind" aria-label="Filter categories"><option value="all">All types</option><option value="expense">Spending</option><option value="income">Income</option><option value="savings">Savings</option><option value="transfer">Transfers</option></select></div><div class="settings-category-list" id="settings-category-list">${cats.map((c) => `<div class="category-compact-row" data-category-name="${esc(c.name.toLowerCase())}" data-category-kind="${esc(c.kind)}">${catDot(c)}<span class="grow">${esc(c.name)}</span><span class="small muted">${c.uses}</span>${c.builtin ? '' : `<button class="btn sm ghost danger" data-cdel="${c.id}" data-n="${esc(c.name)}" data-u="${c.uses}">Delete</button>`}</div>`).join('')}</div><p id="category-empty" class="small muted" hidden>No matching categories.</p></details></div>
+    <details class="card settings-fold" style="margin-bottom:12px"><summary><b>Remembered classifications</b><span class="small muted">${classificationRules.length}</span></summary><p class="muted small">Exact merchant and direction matches only. Existing corrections are never reclassified.</p>
+      <div class="list">${classificationRules.map(r=>`<div><span class="grow"><b>${esc(r.merchant_key)}</b><div class="small muted">${esc(r.direction)}</div></span><select data-rule-cat="${r.id}" style="width:auto">${cats.map(x=>`<option value="${x.id}" ${x.id===r.category_id?'selected':''}>${esc(x.name)}</option>`).join('')}</select><button class="btn sm danger" data-rule-del="${r.id}">Remove</button></div>`).join('')||'<p class="muted small">No saved classifications.</p>'}</div></details>
+    <details class="card settings-fold" style="margin-bottom:12px"><summary><b>Future import exclusions</b><span class="small muted">${exclusions.length}</span></summary><p class="muted small">Removing a rule stops future exclusions; previously removed transactions can be restored from history.</p>
+      <div class="list">${exclusions.map(r=>`<div><span class="grow"><b>${esc(r.merchant_key)}</b><div class="small muted">${esc(r.account_name)} · ${esc(r.direction)} · ${money(r.amount_minor)}</div></span><button class="btn sm danger" data-exclusion-del="${r.id}">Remove</button></div>`).join('')||'<p class="muted small">No exclusion rules.</p>'}</div></details>
+    <details class="card settings-fold" style="margin-bottom:12px"><summary><b>Linked non-personal flows</b><span class="small muted">${flows.length}</span></summary><p class="muted small">Groups are excluded from personal spending and income without altering the source transactions.</p>
+      <div class="list">${flows.map(g=>`<div><span class="grow"><b>${esc(g.kind.replaceAll('_',' '))}</b><div class="small muted">${g.transactions.length} transactions · ${g.transactions.map(t=>money(t.amount_minor)).join(', ')}</div></span><button class="btn sm danger" data-flow-del="${g.id}">Unlink</button></div>`).join('')||'<p class="muted small">No linked flows.</p>'}</div></details>
+
+    <details class="card settings-fold" style="margin-bottom:12px"><summary><b>Export & data</b></summary><h2 class="sr">Export & data</h2><p class="muted small" style="margin-bottom:14px">Everything lives in this app's own database and upload folder. Nothing is shared.</p>
+      <div class="row"><a class="btn" href="/api/export.csv" download>Export all as CSV</a><button class="btn danger" id="wipe">Delete all statements &amp; transactions</button></div></details>
+    <div class="card" style="margin-bottom:12px"><h2>Profile & security</h2><p class="small muted">Signed in as <b>${esc(S.user.email)}</b></p><div class="row" style="margin-top:12px"><button class="btn sm" id="change-password">Change password</button><button class="btn sm" id="out">Sign out</button></div></div>
+    <details class="card settings-fold"><summary><b>Delete account</b></summary><p class="small muted">Permanently delete your account and its data.</p><button class="btn danger" id="delacc">Delete my account</button></details>`;
+  const filterCategories = () => {
+    const search = $('#category-search').value.trim().toLowerCase();
+    const kind = $('#category-kind').value;
+    let shown = 0;
+    $$('.category-compact-row', $('#settings-category-list')).forEach(row => {
+      const visible = row.dataset.categoryName.includes(search) && (kind === 'all' || row.dataset.categoryKind === kind);
+      row.hidden = !visible;
+      if (visible) shown++;
+    });
+    $('#category-empty').hidden = shown > 0;
+  };
+  $('#category-search').oninput = filterCategories;
+  $('#category-kind').onchange = filterCategories;
   $('#imp').onclick = () => openImport();
   $$('[data-rule-cat]').forEach(el => { el.onchange = async () => { try { const rule = classificationRules.find(r=>r.id===+el.dataset.ruleCat); const newCat=cat(+el.value); await api('/classification-rules/'+rule.id,{method:'PATCH',body:{category_id:newCat.id,type:newCat.kind==='income'?'income':newCat.kind==='transfer'?'transfer':'expense'}}); toast('Rule updated'); } catch(e){fail(e);} }; });
   $('#change-password').onclick = () => {
@@ -372,8 +427,6 @@ routes.settings = async (main) => {
     };
   };
   $('#out').onclick = async () => { await api('/auth/logout', { method: 'POST' }); S.user = null; renderAuth(); };
-  const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
-  $$('#theme button').forEach((b) => { b.classList.toggle('on', b.dataset.t === cur); b.onclick = () => { setTheme(b.dataset.t); $$('#theme button').forEach((x) => x.classList.toggle('on', x === b)); }; });
   $('#addc').onclick = () => { const m = modal(`<h2>New category</h2><div id="nerr"></div><div class="field"><label for="cn">Name</label><input id="cn" maxlength="40"></div><div class="field"><label for="ck">Type</label><select id="ck"><option value="expense">Spending</option><option value="income">Income</option><option value="savings">Savings</option></select></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="cgo">Create</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#cgo', m.el).onclick = async () => { try { await api('/categories', { method: 'POST', body: { name: $('#cn', m.el).value, kind: $('#ck', m.el).value, color: '#71717A' } }); m.close(); route(); } catch (e) { $('#nerr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } }; };
   $('#wipe').onclick = async () => { if (await confirmBox({ title: 'Delete all statements and transactions?', body: 'This removes every uploaded file and every transaction. Your account, categories, budgets and goals stay. This can’t be undone.', ok: 'Delete everything', danger: true, typed: 'DELETE' })) { try { await api('/data/wipe', { method: 'POST', body: { confirm: 'DELETE' } }); toast('All statements and transactions deleted'); refreshBadge(); route(); } catch (e) { fail(e); } } };
   $('#delacc').onclick = () => { const m = modal(`<h2>Delete your account?</h2><p class="muted">This permanently deletes your account, all transactions, uploaded files, budgets and goals. Enter your password to confirm.</p><div id="derr"></div><div class="field" style="margin-top:14px"><label for="dpw">Password</label><input id="dpw" type="password" autocomplete="current-password"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="dgo" style="background:var(--bad)">Delete account</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#dgo', m.el).onclick = async () => { try { await api('/auth/delete-account', { method: 'POST', body: { password: $('#dpw', m.el).value } }); m.close(); S.user = null; renderAuth(); } catch (e) { $('#derr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } }; };
@@ -390,9 +443,37 @@ routes.settings = async (main) => {
         $('#k', m.el).onclick = async () => { await api(`/statements/${sd.dataset.sdel}`, { method: 'DELETE' }); m.close(); toast('File deleted'); route(); };
         $('#a', m.el).onclick = async () => { await api(`/statements/${sd.dataset.sdel}?transactions=true`, { method: 'DELETE' }); m.close(); toast('File and transactions deleted'); refreshBadge(); route(); };
       } else if (ad) { if (await confirmBox({ title: `Delete “${ad.dataset.n}”?`, body: 'This also deletes its statements and transactions. This can’t be undone.', ok: 'Delete account', danger: true })) { await api('/accounts/' + ad.dataset.adel, { method: 'DELETE' }); refreshBadge(); route(); } }
-      else if (ar) { const m = modal(`<h2>Rename account</h2><div class="field"><input id="rn" value="${esc(ar.dataset.n)}" maxlength="60" aria-label="Name"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="rg">Save</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#rg', m.el).onclick = async () => { const a = accs.find((x) => x.id == ar.dataset.aren); await api('/accounts/' + a.id, { method: 'PATCH', body: { name: $('#rn', m.el).value, type: a.type, last4: a.last4 } }); m.close(); route(); }; }
+      else if (ar) { accountEditor(accs.find(a=>a.id===+ar.dataset.aren)); }
       else if (cd) { if (await confirmBox({ title: `Delete “${cd.dataset.n}”?`, body: +cd.dataset.u ? `${cd.dataset.u} transaction(s) in this category go back to your review queue.` : 'Nothing is using it.', ok: 'Delete', danger: true })) { await api('/categories/' + cd.dataset.cdel, { method: 'DELETE' }); await loadRef(); refreshBadge(); route(); } }
     } catch (er) { fail(er); }
+  };
+};
+
+/* Accounts hub: card overview and editable account list share one destination. */
+routes.accounts = async (main) => {
+  const accs = await api('/accounts');
+  S.accounts = accs;
+  const cards = accs.filter(a => a.type === 'card');
+  const banks = accs.filter(a => a.type !== 'card');
+  const accountRows = rows => rows.map(a => `<div class="account-hub-row"><span class="grow"><b>${esc(a.name)}</b><div class="small muted">${esc(a.type)}${a.last4?' ••'+esc(a.last4):''} · ${a.txn_count} transactions${a.type==='card'?' · Limit: '+(a.card_monthly_limit_minor?money(a.card_monthly_limit_minor):'Not set'):''}</div></span><button class="btn sm ghost" data-hub-edit="${a.id}">Edit</button><button class="btn sm ghost danger" data-hub-delete="${a.id}">Delete</button></div>`).join('');
+  main.innerHTML = `<div class="head"><div><h1>Accounts</h1><p class="sub">Banks and credit cards, in one place</p></div><button class="btn primary sm" id="hub-add">+ Add account</button></div>
+    <details class="card settings-fold" open style="margin-bottom:12px"><summary><b>Credit Cards</b><span class="small muted">${cards.length} cards</span></summary>
+      <div class="row" style="justify-content:flex-end;gap:8px;margin:12px 0"><button class="btn sm" id="hub-add-card">+ Add card</button><a class="btn sm primary" href="#/cards">View utilization & bills</a></div>
+      <div class="account-hub-list">${accountRows(cards)||'<p class="small muted">No credit cards yet. Add a card to track its limit and repayments.</p>'}</div></details>
+    <details class="card settings-fold" open><summary><b>Bank & other accounts</b><span class="small muted">${banks.length} accounts</span></summary>
+      <div class="account-hub-list">${accountRows(banks)||'<p class="small muted">No bank accounts yet.</p>'}</div></details>`;
+  $('#hub-add').onclick = () => accountEditor();
+  $('#hub-add-card').onclick = () => accountEditor();
+  main.onclick = async e => {
+    const edit=e.target.closest('[data-hub-edit]');
+    const del=e.target.closest('[data-hub-delete]');
+    if(edit) accountEditor(accs.find(a=>a.id===+edit.dataset.hubEdit));
+    if(del) {
+      const account=accs.find(a=>a.id===+del.dataset.hubDelete);
+      if(account && await confirmBox({title:`Delete “${account.name}”?`,body:'This also deletes its statements and transactions. This can’t be undone.',ok:'Delete account',danger:true})) {
+        try { await api('/accounts/'+account.id,{method:'DELETE'}); await loadRef(); await refreshBadge(); route(); } catch(err) { fail(err); }
+      }
+    }
   };
 };
 
@@ -469,4 +550,37 @@ routes.tags = async (main) => {
       $('[data-x]',m.el).onclick=()=>m.close();
     }catch(e){fail(e);}
   });
+};
+
+/* ---------- credit card usage and repayment suggestions ---------- */
+routes.cards = async (main) => {
+  const current=new Date().toISOString().slice(0,7);
+  const draw=async(month=current)=>{
+    const data=await api('/credit-cards?month='+encodeURIComponent(month));
+    main.innerHTML=`<div class="head"><div><h1>Credit Cards</h1><p class="sub">Monthly spending and possible repayments</p></div><button class="btn primary sm" id="add-card-top">+ Add Credit Card</button><div id="card-month-control"></div></div>
+      <div class="grid g2">${data.cards.map(c=>`<section class="card"><h2>${esc(c.name)} ${c.last4?'••'+esc(c.last4):''}</h2>
+      <div class="credit-summary">
+        <div><span class="small muted">Available credit</span><div class="value">${c.available_credit_minor===null?'Set credit limit':money(c.available_credit_minor)}</div></div>
+        <div class="row" style="justify-content:space-between;margin:10px 0"><span class="small muted">Outstanding</span><b>${money(c.outstanding_minor)}</b></div>
+        <div class="row" style="justify-content:space-between"><span class="small muted">Credit utilization</span><b>${c.utilization_percent===null?'—':c.utilization_percent+'%'}</b></div>
+        <div class="bar" style="margin:8px 0"><i style="width:${Math.min(100,c.utilization_percent||0)}%"></i></div>
+        <p class="small muted">Total credit limit: ${c.credit_limit_minor?money(c.credit_limit_minor):'Not set'} · Includes card debits and credits across all imported dates. Actual bank balance may differ.</p>
+      </div>
+      <div class="small muted" style="margin:12px 0 5px">Spent this month</div><div class="value">${money(c.spent_minor)}</div>
+      <p class="muted small">Monthly budget: ${c.monthly_limit_minor?money(c.monthly_limit_minor):'Not set'}${c.usage_percent!==null?' · '+c.usage_percent+'% used':''}</p>
+      <div class="bar" style="margin:10px 0"><i style="width:${Math.min(100,c.usage_percent||0)}%"></i></div>
+      <details class="settings-fold" style="margin-top:14px"><summary><b>Billing statements</b><span class="small muted">${(c.billing_statements||[]).length}</span></summary><div class="list" style="margin-top:8px">${(c.billing_statements||[]).map(b=>`<div><div class="grow"><b>${b.statement_date?fdate(b.statement_date):'Statement'}</b><div class="small muted">Cycle ${b.billing_start?fdate(b.billing_start):'—'} – ${b.billing_end?fdate(b.billing_end):'—'} · Due ${b.due_date?fdate(b.due_date):'—'}</div><div class="small muted">Minimum due: ${b.minimum_due_minor!==null?money(b.minimum_due_minor):'—'} · Payments in cycle: ${money(b.repayments_minor||0)}</div></div><b>${b.amount_due_minor!==null?money(b.amount_due_minor):'—'}</b></div>`).join('')||'<p class="small muted">Billing details will appear after you import a supported credit-card statement.</p>'}</div></details>
+      <h3 style="margin-top:16px">Possible card bill repayments</h3>
+      <p class="small muted">Matches require a bank payment description, equal card credit and dates within 3 days. Confirm before classification.</p>
+      <div class="list">${c.repayment_suggestions.map(p=>`<div><div class="grow"><b>${money(p.amount_minor)}</b><div class="small muted">${esc(p.date)} · ${esc(p.description)}</div></div><button class="btn sm" data-repayment="${c.id}:${p.bank_txn_id}">Confirm transfer</button></div>`).join('')||'<p class="muted small">No unambiguous repayment matches found. You can still classify a bill payment as Transfer in History.</p>'}</div></section>`).join('')||'<div class="card"><p>Add a Credit Card to start tracking its monthly usage.</p><button class="btn primary" id="add-card-here">+ Add Credit Card</button></div>'}</div>`;
+    $('#card-month-control').append(monthSelector(month, next=>draw(next), {label:'Credit card month'}));
+    const addCard=$('#add-card-here',main); if(addCard) addCard.onclick=()=>accountEditor();
+    $('#add-card-top',main).onclick=()=>accountEditor();
+    $$('[data-repayment]',main).forEach(el=>el.onclick=async()=>{
+      const [cid,tid]=el.dataset.repayment.split(':');
+      if(!await confirmBox({title:'Confirm credit card repayment?',body:'Both the bank payment and card credit will become Transfers, excluded from spending and income totals.',ok:'Confirm transfer'}))return;
+      try {await api('/credit-cards/'+cid+'/repayments/'+tid+'/confirm',{method:'POST'});toast('Repayment linked');draw(month);}catch(e){fail(e);}
+    });
+  };
+  await draw();
 };
