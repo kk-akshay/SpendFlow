@@ -98,7 +98,11 @@ async function refreshBadge() {
   try {
     const d = await api('/review/next');
     S.badge = d.progress.pending + d.progress.skipped;
-    $('[data-review-badge]').forEach(b=>{b.textContent=S.badge;b.hidden=!S.badge;});
+    $$('[data-review-badge]').forEach(b=>{
+      b.textContent = S.badge > 99 ? '99+' : S.badge;
+      b.hidden = !S.badge;
+      b.setAttribute('aria-label', S.badge + ' transactions awaiting review');
+    });
   } catch { /* ignore */ }
 }
 
@@ -117,7 +121,7 @@ async function route() {
     if(on)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');
   });
   $$('[data-more-link]').forEach(a=>a.classList.toggle('on',a.dataset.moreLink===active));
-  const more=$('#mobile-more-button'),secondary=['review','people','plan','settings'].includes(active);
+  const more=$('#mobile-more-button'),secondary=['calendar','people','tags','plan','settings'].includes(active);
   if(more){more.classList.toggle('on',secondary);if(secondary)more.setAttribute('aria-current','page');else more.removeAttribute('aria-current');}
   closeMore(false);
   const main = $('main');
