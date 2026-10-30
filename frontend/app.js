@@ -348,6 +348,7 @@ routes.import = async (main, [ids]) => {
         <div class="stat"><div class="label">Money out</div><div class="value">${money(sm.money_out)}</div></div></div>
         <p class="small muted" style="margin-top:12px">${fdate(sm.date_from)} to ${fdate(sm.date_to)} · read with ${esc({ columns: 'column detection', text: 'text matching', gpay: 'Google Pay reader', ai: 'AI' }[st.parser] || st.parser)}</p></div>
       ${st.warnings.map((w) => `<div class="warn-box">${esc(w)}</div>`).join('')}
+      ${st.source_type === 'card' ? `<div class="warn-box"><b>Credit-card statement detected.</b> These purchases and repayments are being assigned to <b>${esc(st.account_name)}</b>. If this is not your intended card, discard this preview and choose the correct card account before importing. Repayments are transfers, not income; verify the repayments and credit limit under Credit Cards after import.</div>` : ''}
       <div class="warn-box">Extracted text can be wrong, especially from scans. Compare a few rows with your statement before relying on the numbers. You can fix any row below.</div>
       ${sm.exact_duplicates ? `<div class="warn-box"><b>${sm.exact_duplicates} already imported.</b> These will be skipped automatically.</div>` : ''}
       ${sm.suspected_duplicates ? `<div class="warn-box"><b>${sm.suspected_duplicates} possible duplicates</b> of transactions in another account or statement (for example a bank payment also shown in Google Pay). They're kept out of your totals until you decide.</div>` : ''}
