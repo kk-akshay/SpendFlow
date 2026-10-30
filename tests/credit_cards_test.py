@@ -22,6 +22,9 @@ with tempfile.TemporaryDirectory() as p:
         assert overview["remaining_minor"]==1850000
         bank=c.post("/api/transactions",json={"account_id":b["id"],"date":"2026-10-16","amount_minor":150000,"direction":"debit","description":"SuperMoney credit card payment"}).json()
         credit=c.post("/api/transactions",json={"account_id":card["id"],"date":"2026-10-16","amount_minor":150000,"direction":"credit","description":"Card bill received"}).json()
+        all_txns=c.get("/api/transactions?sort=date_desc&limit=100").json()["items"]
+        bank=next(t for t in all_txns if t["description"]=="SuperMoney credit card payment")
+        credit=next(t for t in all_txns if t["description"]=="Card bill received")
         data=c.get("/api/credit-cards?month=2026-10").json()["cards"][0]
         assert len(data["repayment_suggestions"])==1,data
         suggestion=data["repayment_suggestions"][0]
