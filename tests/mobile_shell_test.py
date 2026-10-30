@@ -5,7 +5,7 @@ shell=(root/"shell.js").read_text(encoding="utf-8")
 app=(root/"app.js").read_text(encoding="utf-8")
 css=(root/"app.css").read_text(encoding="utf-8")
 html=(root/"index.html").read_text(encoding="utf-8")
-assert '<script src="/shell.js"></script>' in html
+assert '<script src="/shell.js' in html and ('/shell.js"></script>' in html or '/shell.js?v=' in html)
 assert 'href="/brand.svg"' in html
 assert 'fill="currentColor"' in (root/"brand.svg").read_text()
 for name in ("dashboard","transactions","groups","calendar"):
@@ -23,5 +23,7 @@ assert "aria-current" in app and "closeMore(false)" in app
 assert "syncThemeButton" in app and "setTheme(next)" in app
 assert "color-scheme:dark" in css
 assert "#121316" in css and "#F8F9FA" in css
-assert "href=\"/api/export.csv\"" in shell
+assert 'href="/api/export.csv"' in (root/"pages.js").read_text(encoding="utf-8")
+assert "mobile-export" not in shell
+assert "['accounts','Accounts']" in shell
 print("Responsive navigation checks passed")

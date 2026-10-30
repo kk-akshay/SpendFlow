@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip install -r requirements.txt httpx
+      - run: pip install -r requirements.txt httpx2
       - run: python tests/ledger_test.py
       - run: python tests/spendflow_test.py
       - run: python tests/people_loans_test.py
@@ -30,6 +30,7 @@ jobs:
       - run: python tests/background_import_test.py
       - run: python tests/payee_names_test.py
       - run: python tests/credit_cards_test.py
+      - run: python tests/test_credit_card_parser.py
       - run: python tests/api_test.py tests/samples
       - uses: actions/setup-node@v4
         with:

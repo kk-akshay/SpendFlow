@@ -382,3 +382,30 @@ input[type="date"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.8}
 #day-controls{gap:8px}
 #day-controls #chosen-day{min-width:0!important;flex:1 1 150px!important}
 @media(max-width:420px){#day-controls #chosen-day{flex-basis:100%!important;order:-1}#day-controls .btn{flex:1 1 auto}}
+
+/* Compact, keyboard-accessible settings sections. */
+.settings-fold > summary {display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;list-style:none;min-height:30px}
+.settings-fold > summary::-webkit-details-marker {display:none}
+.settings-fold > summary::before {content:"›";font-size:20px;color:var(--muted);transition:transform .15s}
+.settings-fold[open] > summary::before {transform:rotate(90deg)}
+.settings-fold > summary b {flex:1}
+.settings-fold > summary:focus-visible {outline:2px solid var(--accent);outline-offset:4px;border-radius:5px}
+.category-compact-row {gap:7px!important;min-height:34px;padding:5px 0!important}
+.category-compact-row .btn {padding:4px 8px}
+@media(max-width:760px){.settings-fold {margin-bottom:10px!important}.category-compact-row {flex-wrap:nowrap}}
+
+/* Compact Settings and Accounts hub */
+.settings-category-tools{display:flex;gap:8px;align-items:center;margin:12px 0 8px}
+.settings-category-tools input{flex:1;min-width:0}
+.settings-category-tools select{flex:0 0 auto;width:auto;max-width:42%}
+.settings-category-list{max-height:280px;overflow-y:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:12px}
+.settings-category-list .category-compact-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);font-size:13px;min-height:38px}
+.settings-category-list .category-compact-row:last-child{border-bottom:0}
+.settings-category-list .category-compact-row[hidden]{display:none}
+.settings-category-list .category-compact-row .btn{min-height:30px;padding:4px 8px}
+.settings-shortcut{display:flex;align-items:center}
+.settings-shortcut>.row{width:100%}
+.account-hub-list{display:grid;gap:0;margin-top:8px}
+.account-hub-row{display:flex;align-items:center;gap:8px;min-width:0;padding:12px 0;border-top:1px solid var(--line)}
+.account-hub-row .grow{min-width:0;overflow-wrap:anywhere}
+@media(max-width:560px){.settings-category-tools{flex-wrap:wrap}.settings-category-tools select{max-width:none;width:100%}.account-hub-row{flex-wrap:wrap}.account-hub-row .grow{flex-basis:100%}}

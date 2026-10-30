@@ -449,17 +449,32 @@ def confirm_card_repayment(card_id: int, bank_txn_id: int, user=Depends(current_
 
 def _resolve_account(db, uid, account_id, new_name, new_type, res, cache: dict) -> int:
     if account_id:
-        return _own_account(db, uid, account_id)["id"]
+        chosen = _own_account(db, uid, account_id)
+        if res.source_type == "card" and chosen["type"] != "card":
+            raise ValueError("Credit-card statements must be imported into a credit-card account.")
+        return chosen["id"]
     if new_name:
         if "new" not in cache:
-            t = new_type if new_type in ("bank", "upi", "card", "cash") else "bank"
+            t = "card" if res.source_type == "card" else (new_type if new_type in ("bank", "upi", "card", "cash") else "bank")
             cache["new"] = db.execute("INSERT INTO accounts(user_id,name,type) VALUES(?,?,?)", (uid, new_name.strip()[:60], t)).lastrowid
         return cache["new"]
     name = res.account_name or ("Google Pay" if res.source_type == "gpay" else "Bank account")
-    row = db.execute("SELECT id FROM accounts WHERE user_id=? AND name=? AND (last4 IS NULL OR ?='' OR last4=?)",
+    if res.source_type == "card" and not res.account_last4:
+        raise ValueError("Card number was not detected; choose an existing card account.")
+    if res.source_type == "card":
+        matches = db.execute("SELECT id FROM accounts WHERE user_id=? AND type='card' AND last4=?", (uid, res.account_last4)).fetchall()
+        if len(matches) > 1:
+            raise ValueError("Multiple cards share these last four digits; choose the correct card.")
+        row = matches[0] if matches else None
+    else:
+        row = db.execute("SELECT id FROM accounts WHERE user_id=? AND type!='card' AND name=? AND (last4 IS NULL OR ?='' OR last4=?)",
                      (uid, name, res.account_last4 or "", res.account_last4 or "")).fetchone()
     if row:
         return row["id"]
+    if res.source_type == "card":
+        info = res.card_info
+        return db.execute("INSERT INTO accounts(user_id,name,type,last4,card_credit_limit_minor) VALUES(?,?,?,?,?)",
+                          (uid,name,"card",res.account_last4,info.get("limit_minor") or 0)).lastrowid
     return db.execute("INSERT INTO accounts(user_id,name,type,last4) VALUES(?,?,?,?)",
                       (uid, name, "upi" if res.source_type == "gpay" else "bank", res.account_last4)).lastrowid
 
@@ -580,6 +595,30 @@ def _own_statement(db, uid: int, sid: int):
     return r
 
 
+class CardImportAccount(BaseModel):
+    account_id: int
+
+@app.patch("/api/imports/{sid}/card-account")
+def set_import_card_account(sid: int, body: CardImportAccount, user=Depends(current_user), db=Depends(get_db)):
+    """Move a staged card statement to an existing credit-card account before import."""
+    st = _own_statement(db, user["id"], sid)
+    if st["status"] != "preview" or st["source_type"] != "card":
+        raise HTTPException(400, "Only pending credit-card imports can change accounts.")
+    dest = _own_account(db,user["id"],body.account_id)
+    if dest["type"] != "card":
+        raise HTTPException(400, "Choose a credit-card account.")
+    meta = json.loads(st["card_meta"] or "{}")
+    if meta.get("last4") and dest["last4"] and meta["last4"] != dest["last4"]:
+        raise HTTPException(400, "Card number does not match the statement.")
+    db.execute("UPDATE statements SET account_id=? WHERE id=? AND user_id=?", (dest["id"],sid,user["id"]))
+    db.execute("UPDATE transactions SET account_id=? WHERE statement_id=? AND user_id=? AND status='staged'",
+               (dest["id"],sid,user["id"]))
+    from .importing import mark_duplicates
+    mark_duplicates(db,user["id"],sid)
+    db.commit()
+    return {"ok":True,"account_id":dest["id"]}
+
+
 @app.get("/api/imports/{sid}")
 def import_preview(sid: int, user=Depends(current_user), db=Depends(get_db)):
     st = _own_statement(db, user["id"], sid)
@@ -594,7 +633,7 @@ def import_preview(sid: int, user=Depends(current_user), db=Depends(get_db)):
         rows.append(d)
     return {
         "statement": {**{k: st[k] for k in ("id", "filename", "source_type", "parser", "status", "account_id", "account_name")},
-                      "warnings": json.loads(st["warnings"])},
+                      "warnings": json.loads(st["warnings"]), "card_meta": json.loads(st["card_meta"] or "{}") },
         "rows": rows,
         "summary": {
             "count": len(rows),

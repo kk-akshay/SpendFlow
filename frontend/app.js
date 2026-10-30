@@ -152,7 +152,7 @@ async function route() {
     if(on)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');
   });
   $$('[data-more-link]').forEach(a=>a.classList.toggle('on',a.dataset.moreLink===active));
-  const more=$('#mobile-more-button'),secondary=['calendar','people','tags','plan','settings'].includes(active);
+  const more=$('#mobile-more-button'),secondary=['calendar','groups','people','tags','plan','settings'].includes(active);
   if(more){more.classList.toggle('on',secondary);if(secondary)more.setAttribute('aria-current','page');else more.removeAttribute('aria-current');}
   closeMore(false);
   const main = $('main');
@@ -348,6 +348,7 @@ routes.import = async (main, [ids]) => {
         <div class="stat"><div class="label">Money out</div><div class="value">${money(sm.money_out)}</div></div></div>
         <p class="small muted" style="margin-top:12px">${fdate(sm.date_from)} to ${fdate(sm.date_to)} · read with ${esc({ columns: 'column detection', text: 'text matching', gpay: 'Google Pay reader', ai: 'AI' }[st.parser] || st.parser)}</p></div>
       ${st.warnings.map((w) => `<div class="warn-box">${esc(w)}</div>`).join('')}
+      ${st.source_type === 'card' ? `<div class="card" style="margin-bottom:12px"><h2>Credit card detected</h2><p class="small muted">${esc(st.card_meta?.name || st.account_name)} ${st.card_meta?.last4?'•••• '+esc(st.card_meta.last4):''} · ${st.card_meta?.limit_minor?money(st.card_meta.limit_minor)+' credit limit':'Credit limit unknown'}</p><p class="small muted">Imported into: <b>${esc(st.account_name)}</b></p><div class="row"><button class="btn sm primary" id="card-import-keep">Add as Credit Card / Keep Detected</button><select id="card-import-existing" aria-label="Choose existing credit card"><option value="">Choose Existing…</option>${S.accounts.filter(a=>a.type==='card').map(a=>`<option value="${a.id}" ${a.id===st.account_id?'selected':''}>${esc(a.name)} ${a.last4?'••'+esc(a.last4):''}</option>`).join('')}</select><button class="btn sm" id="card-import-switch">Use selected</button></div></div>` : ''}
       <div class="warn-box">Extracted text can be wrong, especially from scans. Compare a few rows with your statement before relying on the numbers. You can fix any row below.</div>
       ${sm.exact_duplicates ? `<div class="warn-box"><b>${sm.exact_duplicates} already imported.</b> These will be skipped automatically.</div>` : ''}
       ${sm.suspected_duplicates ? `<div class="warn-box"><b>${sm.suspected_duplicates} possible duplicates</b> of transactions in another account or statement (for example a bank payment also shown in Google Pay). They're kept out of your totals until you decide.</div>` : ''}
@@ -400,6 +401,16 @@ routes.import = async (main, [ids]) => {
       } catch (er) { fail(er); }
     };
     $('#addrow').onclick = () => editRow(null, show, id);
+    if(st.source_type==='card'){
+      const selected=$('#card-import-existing');
+      $('#card-import-keep').onclick=()=>toast('Detected credit card selected');
+      $('#card-import-switch').onclick=async()=>{
+        if(!selected.value){toast('Choose a credit card first');return;}
+        try{await api('/imports/'+id+'/card-account',{method:'PATCH',body:{account_id:+selected.value}});
+          await loadRef();show();
+        }catch(err){fail(err);}
+      };
+    }
     $('#imp-cancel').onclick = async () => { if (await confirmBox({ title: 'Discard this import?', body: 'The uploaded file and its rows will be deleted.', ok: 'Discard', danger: true })) { await api('/statements/' + id, { method: 'DELETE' }); next(true); } };
     $('#imp-ok').onclick = async () => {
       const b = $('#imp-ok'); b.disabled = true; b.textContent = 'Importing…';
