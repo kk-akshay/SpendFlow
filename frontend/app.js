@@ -34,6 +34,37 @@ const toMinor = (str) => { const n = parseFloat(String(str).replace(/[^\d.]/g, '
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fdate = (iso, withYear = true) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${+d} ${MONTHS[+m - 1]}${withYear ? ' ' + y : ''}`; };
 const fmonth = (ym, long = true) => { const [y, m] = ym.split('-'); return new Date(+y, +m - 1, 1).toLocaleString('en', { month: long ? 'long' : 'short', year: long ? 'numeric' : undefined }); };
+/* Reusable, theme-aware month selector (no browser-native month popup). */
+function monthSelector(ym, onChange, { label = 'Select month' } = {}) {
+  const container = document.createElement('div');
+  container.className = 'month-picker';
+  let selected = /^\d{4}-(0[1-9]|1[0-2])$/.test(ym) ? ym : todayIso().slice(0,7);
+  let displayYear = Number(selected.slice(0,4));
+  const close = () => { container.classList.remove('open'); button.setAttribute('aria-expanded','false'); popup.hidden = true; };
+  const button = document.createElement('button');
+  button.type='button';button.className='month-picker-trigger';button.setAttribute('aria-label',label);
+  button.setAttribute('aria-expanded','false');button.setAttribute('aria-haspopup','dialog');
+  const popup=document.createElement('div');popup.className='month-picker-popup';popup.hidden=true;
+  container.append(button,popup);
+  function draw() {
+    button.textContent = fmonth(selected) + '  ▾';
+    popup.innerHTML = '<div class="month-picker-header"><button type="button" data-year="-1" aria-label="Previous year">‹</button><strong>'+displayYear+'</strong><button type="button" data-year="1" aria-label="Next year">›</button></div>'+
+      '<div class="month-picker-grid">'+MONTHS.map((name,i)=>{
+        const value=displayYear+'-'+String(i+1).padStart(2,'0');
+        return '<button type="button" data-month="'+value+'" class="'+(value===selected?'chosen':'')+'" aria-pressed="'+(value===selected)+'">'+name+'</button>';
+      }).join('')+'</div><button type="button" class="month-picker-today" data-current>This month</button>';
+  }
+  button.onclick=()=>{const open=popup.hidden;document.querySelectorAll('.month-picker.open').forEach(el=>{if(el!==container){el.classList.remove('open');const p=el.querySelector('.month-picker-popup');if(p)p.hidden=true;}});popup.hidden=!open;container.classList.toggle('open',open);button.setAttribute('aria-expanded',String(open));};
+  popup.onclick=e=>{
+    const yr=e.target.closest('[data-year]'),mo=e.target.closest('[data-month]'),now=e.target.closest('[data-current]');
+    if(yr){displayYear+=Number(yr.dataset.year);draw();}
+    if(mo||now){const next=now?todayIso().slice(0,7):mo.dataset.month;selected=next;displayYear=+selected.slice(0,4);close();draw();onChange(next);}
+  };
+  const dismiss=e=>{if(!container.isConnected){document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',escape);return;}if(!container.contains(e.target))close();};
+  const escape=e=>{if(!container.isConnected){document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',escape);return;}if(e.key==='Escape'&&!popup.hidden){close();button.focus();}};
+  document.addEventListener('pointerdown',dismiss);document.addEventListener('keydown',escape);
+  draw();return container;
+}
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 const typeLabel = { income: 'Income', expense: 'Expense', transfer: 'Transfer' };
 const cat = (id) => S.cats.find((c) => c.id === id);
