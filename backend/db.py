@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS accounts(
   name TEXT NOT NULL,
   type TEXT NOT NULL DEFAULT 'bank',
   last4 TEXT,
+  card_monthly_limit_minor INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -315,6 +316,9 @@ def init_db() -> None:
             conn.execute("ALTER TABLE transactions ADD COLUMN removed_at TEXT")
         if "excluded_rule_id" not in columns:
             conn.execute("ALTER TABLE transactions ADD COLUMN excluded_rule_id INTEGER")
+        account_columns = {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
+        if "card_monthly_limit_minor" not in account_columns:
+            conn.execute("ALTER TABLE accounts ADD COLUMN card_monthly_limit_minor INTEGER NOT NULL DEFAULT 0")
         conn.commit()
     finally:
         conn.close()

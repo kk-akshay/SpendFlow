@@ -29,6 +29,7 @@ jobs:
       - run: python tests/make_samples.py tests/samples
       - run: python tests/background_import_test.py
       - run: python tests/payee_names_test.py
+      - run: python tests/credit_cards_test.py
       - run: python tests/api_test.py tests/samples
       - uses: actions/setup-node@v4
         with:
