@@ -218,6 +218,36 @@ async function openTxn(id, done) {
   };
 }
 
+function accountEditor(account=null) {
+    const m=modal(`<h2>${account?'Edit account':'Add credit card'}</h2><div id="card-err"></div>
+      <div class="field"><label>Name</label><input id="card-name" maxlength="60" value="${esc(account?.name || '')}" placeholder="SuperMoney Credit Card"></div>
+      <div class="field"><label>Account type</label><select id="card-type">
+        ${[['card','Credit Card'],['bank','Bank'],['upi','UPI'],['cash','Cash']].map(([v,n])=>`<option value="${v}" ${(account?.type || 'card')===v?'selected':''}>${n}</option>`).join('')}</select></div>
+      <div class="field"><label>Last 4 digits (optional)</label><input id="card-last4" maxlength="4" inputmode="numeric" value="${esc(account?.last4||'')}"></div>
+      <div class="field" id="card-limit-field"><label>Monthly card spending limit (₹)</label>
+      <input id="card-limit" inputmode="decimal" value="${account?.card_monthly_limit_minor ? (account.card_monthly_limit_minor/100).toFixed(2) : ''}" placeholder="e.g. 20000">
+      <div class="small muted">Optional monthly spending budget (does not reset when you repay).</div></div>
+      <div class="field card-credit-field"><label>Card credit limit (₹)</label><input id="credit-limit" inputmode="decimal" value="${account?.card_credit_limit_minor ? (account.card_credit_limit_minor/100).toFixed(2) : ''}" placeholder="e.g. 50000"></div>
+      <div class="field card-credit-field"><label>Opening outstanding (₹, optional)</label><input id="opening-outstanding" inputmode="decimal" value="${account?.card_opening_outstanding_minor ? (account.card_opening_outstanding_minor/100).toFixed(2) : ''}" placeholder="0">
+      <div class="small muted">Only enter a balance from before your earliest imported card transaction; otherwise leave 0 to avoid counting it twice.</div></div>
+      <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="card-save">Save account</button></div>`);
+    $('[data-x]',m.el).onclick=()=>m.close();
+    const setType=()=>{const isCard=$('#card-type',m.el).value==='card';$('#card-limit-field',m.el).hidden=!isCard;$$('.card-credit-field',m.el).forEach(x=>x.hidden=!isCard);};
+    $('#card-type',m.el).onchange=setType;setType();
+    $('#card-save',m.el).onclick=async()=>{
+      try{
+        const body={name:$('#card-name',m.el).value.trim(),type:$('#card-type',m.el).value,
+          last4:$('#card-last4',m.el).value.trim()||null,
+          card_monthly_limit_minor:$('#card-type',m.el).value==='card'?toMinor($('#card-limit',m.el).value||'0'):0,
+          card_credit_limit_minor:$('#card-type',m.el).value==='card'?toMinor($('#credit-limit',m.el).value||'0'):0,
+          card_opening_outstanding_minor:$('#card-type',m.el).value==='card'?toMinor($('#opening-outstanding',m.el).value||'0'):0};
+        if(!body.name)throw new Error('Enter an account name.');
+        await api(account?'/accounts/'+account.id:'/accounts',{method:account?'PATCH':'POST',body});
+        m.close();await loadRef();route();
+      }catch(e){$('#card-err',m.el).textContent=e.message;}
+    };
+}
+
 /* ---------- history ---------- */
 routes.transactions = async (main, [pre]) => {
   const f = { q: '', category: '', account: '', status: '', type: '', from: '', to: '', min: '', max: '', sort: 'date_desc', page: 1, dup: '' };
@@ -239,37 +269,6 @@ routes.transactions = async (main, [pre]) => {
         <div class="row" style="flex-wrap:nowrap"><input id="fmin" inputmode="decimal" placeholder="Min ₹" aria-label="Minimum amount"><input id="fmax" inputmode="decimal" placeholder="Max ₹" aria-label="Maximum amount"></div></div></details></div>
     <div id="selbar" aria-live="polite"></div><div id="list"></div>`;
   $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
-  const accountEditor = (account=null) => {
-    const isCard = !account || account.type === 'card';
-    const m=modal(`<h2>${account?'Edit account':'Add credit card'}</h2><div id="card-err"></div>
-      <div class="field"><label>Name</label><input id="card-name" maxlength="60" value="${esc(account?.name || '')}" placeholder="SuperMoney Credit Card"></div>
-      <div class="field"><label>Account type</label><select id="card-type">
-        ${[['card','Credit Card'],['bank','Bank'],['upi','UPI'],['cash','Cash']].map(([v,n])=>`<option value="${v}" ${(account?.type || 'card')===v?'selected':''}>${n}</option>`).join('')}</select></div>
-      <div class="field"><label>Last 4 digits (optional)</label><input id="card-last4" maxlength="4" inputmode="numeric" value="${esc(account?.last4||'')}"></div>
-      <div class="field" id="card-limit-field"><label>Monthly card spending limit (₹)</label>
-      <input id="card-limit" inputmode="decimal" value="${account?.card_monthly_limit_minor ? (account.card_monthly_limit_minor/100).toFixed(2) : ''}" placeholder="e.g. 20000">
-      <div class="small muted">Optional monthly spending budget (does not reset when you repay).</div></div>
-      <div class="field card-credit-field"><label>Card credit limit (₹)</label><input id="credit-limit" inputmode="decimal" value="${account?.card_credit_limit_minor ? (account.card_credit_limit_minor/100).toFixed(2) : ''}" placeholder="e.g. 50000"></div>
-      <div class="field card-credit-field"><label>Opening outstanding (₹, optional)</label><input id="opening-outstanding" inputmode="decimal" value="${account?.card_opening_outstanding_minor ? (account.card_opening_outstanding_minor/100).toFixed(2) : ''}" placeholder="0">
-      <div class="small muted">Only enter a balance from before your earliest imported card transaction; otherwise leave 0 to avoid counting it twice.</div></div>
-      <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="card-save">Save account</button></div>`);
-    $('[data-x]',m.el).onclick=()=>m.close();
-    const setType=()=>{const isCard=$('#card-type',m.el).value==='card';$('#card-limit-field',m.el).hidden=!isCard;$('.card-credit-field',m.el).forEach(x=>x.hidden=!isCard);};
-    $('#card-type',m.el).onchange=setType;setType();
-    $('#card-save',m.el).onclick=async()=>{
-      try{
-        const body={name:$('#card-name',m.el).value.trim(),type:$('#card-type',m.el).value,
-          last4:$('#card-last4',m.el).value.trim()||null,
-          card_monthly_limit_minor:$('#card-type',m.el).value==='card'?toMinor($('#card-limit',m.el).value||'0'):0,
-          card_credit_limit_minor:$('#card-type',m.el).value==='card'?toMinor($('#credit-limit',m.el).value||'0'):0,
-          card_opening_outstanding_minor:$('#card-type',m.el).value==='card'?toMinor($('#opening-outstanding',m.el).value||'0'):0};
-        if(!body.name)throw new Error('Enter an account name.');
-        await api(account?'/accounts/'+account.id:'/accounts',{method:account?'PATCH':'POST',body});
-        m.close();await loadRef();route();
-      }catch(e){$('#card-err',m.el).textContent=e.message;}
-    };
-  };
-  $('#new-card-account').onclick=()=>accountEditor();
   $('#imp').onclick = () => openImport();
   $('#add-manual').onclick = () => manualTransaction(todayIso(), load);
   $('#show-removed').onclick = () => { f.include_removed = f.include_removed ? '' : 1; $('#show-removed').textContent = f.include_removed ? 'Hide removed' : 'Removed transactions'; load(); };
@@ -391,6 +390,7 @@ routes.settings = async (main) => {
     <div class="card" style="margin-bottom:16px"><h2 style="margin-bottom:6px">Appearance</h2><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div>
     <div class="card"><h2 style="margin-bottom:6px">Your data</h2><p class="muted small" style="margin-bottom:14px">Everything lives in this app's own database and upload folder. Nothing is shared.</p>
       <div class="row"><a class="btn" href="/api/export.csv" download>Export all as CSV</a><button class="btn danger" id="wipe">Delete all statements &amp; transactions</button><button class="btn danger" id="delacc">Delete my account</button></div></div>`;
+  $('#new-card-account').onclick = () => accountEditor();
   $('#imp').onclick = () => openImport();
   $$('[data-rule-cat]').forEach(el => { el.onchange = async () => { try { const rule = classificationRules.find(r=>r.id===+el.dataset.ruleCat); const newCat=cat(+el.value); await api('/classification-rules/'+rule.id,{method:'PATCH',body:{category_id:newCat.id,type:newCat.kind==='income'?'income':newCat.kind==='transfer'?'transfer':'expense'}}); toast('Rule updated'); } catch(e){fail(e);} }; });
   $('#change-password').onclick = () => {
@@ -517,7 +517,7 @@ routes.cards = async (main) => {
   const current=new Date().toISOString().slice(0,7);
   const draw=async(month=current)=>{
     const data=await api('/credit-cards?month='+encodeURIComponent(month));
-    main.innerHTML=`<div class="head"><div><h1>Credit Cards</h1><p class="sub">Monthly spending and possible repayments</p></div><input type="month" id="card-month" value="${esc(month)}" aria-label="Card spending month"></div>
+    main.innerHTML=`<div class="head"><div><h1>Credit Cards</h1><p class="sub">Monthly spending and possible repayments</p></div><button class="btn primary sm" id="add-card-top">+ Add Credit Card</button><input type="month" id="card-month" value="${esc(month)}" aria-label="Card spending month"></div>
       <div class="grid g2">${data.cards.map(c=>`<section class="card"><h2>${esc(c.name)} ${c.last4?'••'+esc(c.last4):''}</h2>
       <div class="credit-summary">
         <div><span class="small muted">Available credit</span><div class="value">${c.available_credit_minor===null?'Set credit limit':money(c.available_credit_minor)}</div></div>
@@ -531,8 +531,10 @@ routes.cards = async (main) => {
       <div class="bar" style="margin:10px 0"><i style="width:${Math.min(100,c.usage_percent||0)}%"></i></div>
       <h3 style="margin-top:16px">Possible card bill repayments</h3>
       <p class="small muted">Matches require a bank payment description, equal card credit and dates within 3 days. Confirm before classification.</p>
-      <div class="list">${c.repayment_suggestions.map(p=>`<div><div class="grow"><b>${money(p.amount_minor)}</b><div class="small muted">${esc(p.date)} · ${esc(p.description)}</div></div><button class="btn sm" data-repayment="${c.id}:${p.bank_txn_id}">Confirm transfer</button></div>`).join('')||'<p class="muted small">No unambiguous repayment matches found. You can still classify a bill payment as Transfer in History.</p>'}</div></section>`).join('')||'<div class="card">Add a Credit Card in Settings → Accounts to start tracking its monthly usage.</div>'}</div>`;
+      <div class="list">${c.repayment_suggestions.map(p=>`<div><div class="grow"><b>${money(p.amount_minor)}</b><div class="small muted">${esc(p.date)} · ${esc(p.description)}</div></div><button class="btn sm" data-repayment="${c.id}:${p.bank_txn_id}">Confirm transfer</button></div>`).join('')||'<p class="muted small">No unambiguous repayment matches found. You can still classify a bill payment as Transfer in History.</p>'}</div></section>`).join('')||'<div class="card"><p>Add a Credit Card to start tracking its monthly usage.</p><button class="btn primary" id="add-card-here">+ Add Credit Card</button></div>'}</div>`;
     $('#card-month').onchange=e=>draw(e.target.value);
+    const addCard=$('#add-card-here',main); if(addCard) addCard.onclick=()=>accountEditor();
+    $('#add-card-top',main).onclick=()=>accountEditor();
     $$('[data-repayment]',main).forEach(el=>el.onclick=async()=>{
       const [cid,tid]=el.dataset.repayment.split(':');
       if(!await confirmBox({title:'Confirm credit card repayment?',body:'Both the bank payment and card credit will become Transfers, excluded from spending and income totals.',ok:'Confirm transfer'}))return;
