@@ -66,7 +66,7 @@ routes.dashboard = async (main, [month]) => {
   const unc = d.uncategorized;
   main.innerHTML = `<div class="head"><div><h1>${fmonth(d.month)}</h1><p class="sub">Cash flow and spending</p></div>
     <div class="row"><button class="btn sm" id="pm" ${i <= 0 ? 'disabled' : ''} aria-label="Previous month">←</button>
-      <select id="msel" style="width:auto" aria-label="Month">${d.months.map((m) => `<option value="${m}" ${m === d.month ? 'selected' : ''}>${fmonth(m)}</option>`).join('')}</select>
+      <div id="dashboard-month-control"></div>
       <button class="btn sm" id="nm" ${i >= d.months.length - 1 ? 'disabled' : ''} aria-label="Next month">→</button></div></div>
     ${unc.count ? `<div class="card flat row" style="justify-content:space-between;margin-bottom:16px;background:var(--accent-soft)"><div><b>${unc.count} transaction${unc.count > 1 ? 's' : ''} to review</b><div class="small muted">Totals are estimates until each one has a category.</div></div><a class="btn primary" href="#/review">Continue reviewing</a></div>` : ''}
     ${d.duplicates ? `<div class="warn-box row" style="justify-content:space-between"><span>${d.duplicates} possible duplicate${d.duplicates > 1 ? 's' : ''} left out of totals.</span><a href="#/transactions/duplicates">Check them</a></div>` : ''}
@@ -86,7 +86,8 @@ routes.dashboard = async (main, [month]) => {
       <div class="card"><h2 style="margin-bottom:6px">Accounts · ${fmonth(d.month, false)}</h2><div class="list">${d.accounts.map((a) => `<div><div class="grow"><b>${esc(a.name)}</b><div class="small muted">In ${money(a.income)} · Out ${money(a.expense)}${a.transfer_in || a.transfer_out ? ` · Transfers ${money(a.transfer_in - a.transfer_out, { sign: true })}` : ''}</div></div></div>`).join('') || '<p class="muted">No accounts.</p>'}</div>
         ${d.recurring.count ? `<div class="row small" style="margin-top:12px;justify-content:space-between"><span class="muted">${d.recurring.count} recurring bills</span><b>${money(d.recurring.monthly_total_minor)}/mo</b></div>` : ''}</div></div>`;
   const nav = (m) => go('#/dashboard/' + m);
-  $('#msel').onchange = (e) => nav(e.target.value); $('#pm').onclick = () => nav(d.months[i - 1]); $('#nm').onclick = () => nav(d.months[i + 1]);
+  $('#dashboard-month-control').append(monthSelector(d.month, nav, {label:'Dashboard month'}));
+  $('#pm').onclick = () => nav(d.months[i - 1]); $('#nm').onclick = () => nav(d.months[i + 1]);
   main.onclick = (e) => { const r = e.target.closest('[data-txn]'); if (r) openTxn(+r.dataset.txn, () => route()); };
 };
 
