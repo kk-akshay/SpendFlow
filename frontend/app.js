@@ -152,7 +152,7 @@ async function route() {
     if(on)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');
   });
   $$('[data-more-link]').forEach(a=>a.classList.toggle('on',a.dataset.moreLink===active));
-  const more=$('#mobile-more-button'),secondary=['calendar','people','tags','plan','settings'].includes(active);
+  const more=$('#mobile-more-button'),secondary=['calendar','groups','people','tags','plan','settings'].includes(active);
   if(more){more.classList.toggle('on',secondary);if(secondary)more.setAttribute('aria-current','page');else more.removeAttribute('aria-current');}
   closeMore(false);
   const main = $('main');
