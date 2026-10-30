@@ -862,6 +862,34 @@ def review_next(scope: str = "pending", order: str = "desc", user=Depends(curren
     return _review_state(db, user["id"], "skipped" if scope == "skipped" else "pending", order)
 
 
+class PayeeNameEdit(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    remember: bool = False
+
+
+@app.patch("/api/review/{txn_id}/payee-name")
+def review_payee_name(txn_id: int, b: PayeeNameEdit, user=Depends(current_user), db=Depends(get_db)):
+    from . import payee_names
+    uid = user["id"]
+    name = b.name.strip()
+    if not name:
+        raise HTTPException(400, "Enter a name.")
+    row = db.execute("SELECT id,description,status FROM transactions WHERE id=? AND user_id=? "
+                     "AND status IN ('pending','skipped') AND removed_at IS NULL",
+                     (txn_id, uid)).fetchone()
+    if not row:
+        raise LookupError("Transaction is not waiting for review.")
+    info = payee_names.identity_details(row["description"])
+    if b.remember and not info:
+        raise HTTPException(400, "No reliable UPI or bank payee reference to remember. Save this name for this transaction only.")
+    db.execute("UPDATE transactions SET merchant=?,merchant_key=? WHERE id=? AND user_id=?",
+               (name, merchant_key(name), txn_id, uid))
+    if b.remember:
+        payee_names.learn(db, uid, info["identity"], name)
+    db.commit()
+    return {"merchant": name, "remembered": b.remember}
+
+
 @app.post("/api/review/{txn_id}/categorize")
 def review_categorize(txn_id: int, b: CategorizeIn, scope: str = "pending", order: str = "desc", user=Depends(current_user), db=Depends(get_db)):
     res = txns.apply_category(db, user["id"], txn_id, b.model_dump(exclude_unset=True))
