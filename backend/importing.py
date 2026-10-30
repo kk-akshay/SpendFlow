@@ -25,9 +25,9 @@ def _related(a: str, b: str) -> bool:
 def create_statement(db, user_id: int, account_id: int, filename: str, stored_path: str, sha: str, mime: str,
                      res: ParseResult) -> int:
     cur = db.execute(
-        "INSERT INTO statements(user_id,account_id,filename,stored_path,sha256,mime,source_type,parser,status,warnings) "
-        "VALUES(?,?,?,?,?,?,?,?,'preview',?)",
-        (user_id, account_id, filename, stored_path, sha, mime, res.source_type, res.parser, json.dumps(res.warnings)))
+        "INSERT INTO statements(user_id,account_id,filename,stored_path,sha256,mime,source_type,parser,status,warnings,card_meta) "
+        "VALUES(?,?,?,?,?,?,?,?,'preview',?,?)",
+        (user_id, account_id, filename, stored_path, sha, mime, res.source_type, res.parser, json.dumps(res.warnings), json.dumps(res.card_info)))
     sid = cur.lastrowid
     # One batched DB operation rather than hundreds of network round trips.
     # Keep insert_staged_row() for manual preview-row edits (which need lastrowid).
