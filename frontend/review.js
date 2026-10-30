@@ -39,7 +39,7 @@ routes.review = async (main) => {
         <article class="tcard enter" id="card" aria-label="Transaction to categorise">
           <div class="kind"><span class="pill ${type === 'transfer' ? '' : inflow ? 'good' : ''}">${typeLabel[type]}</span>
             <button class="btn sm ghost" id="type-btn" title="Change type">Change type</button></div>
-          <div class="merchant">${esc(t.merchant || 'Unknown merchant')}</div>
+          <div class="review-payee-heading"><div class="merchant">${esc(t.merchant || 'Unknown merchant')}</div><button type="button" class="btn sm" id="edit-payee-name" aria-label="Edit merchant or person name">✎ Edit name</button></div>
           <div class="amount num ${inflow ? 'amount-in' : 'amount-out'}">${inflow ? '↑ +' : '↓ −'}${money(t.amount_minor)}</div>
           <div class="muted">${fdate(t.date)}${t.time ? ' · ' + esc(t.time) : ''} · ${esc(t.account_name)}</div>
           <div class="desc" title="As read from your statement. May contain errors.">${esc(t.description || '(no description)')}</div>
@@ -183,6 +183,31 @@ routes.review = async (main) => {
           if (!selectedTagIds.includes(tag.id)) selectedTagIds.push(tag.id);
           await loadTags(); m.close(); draw();
         } catch (e) { $('#tag-error', m.el).textContent = e.message; }
+      };
+    };
+    $('#edit-payee-name').onclick = () => {
+      const t = state.item.txn;
+      const remembered = state.item.payee_memory_available;
+      const label = state.item.payee_identity_label || '';
+      const m = modal(`<h2>Edit transaction name</h2><p class="small muted">Correct the name shown in SpendFlow. The original bank narration stays unchanged.</p>
+        <div id="payee-name-error"></div>
+        <div class="field"><label for="payee-name-input">Merchant or person name</label><input id="payee-name-input" maxlength="80" value="${esc(t.merchant || '')}" required></div>
+        ${remembered ? `<label class="check"><input type="checkbox" id="remember-payee-name"> Remember for future imports matching this reference</label><p class="small muted">${esc(label)} · Only this account's saved rules apply; existing transactions won't be renamed.</p>` :
+          '<p class="small muted">No reliable payee identifier was found. You can still correct this transaction individually.</p>'}
+        <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="payee-name-save">Save name</button></div>`);
+      $('[data-x]', m.el).onclick = () => m.close();
+      $('#payee-name-save', m.el).onclick = async () => {
+        const name = $('#payee-name-input', m.el).value.trim();
+        if (!name) { $('#payee-name-error', m.el).textContent = 'Enter a name.'; return; }
+        const button = $('#payee-name-save', m.el);
+        button.disabled = true;
+        try {
+          await api('/review/' + t.id + '/payee-name', { method: 'PATCH',
+            body: { name, remember: !!$('#remember-payee-name', m.el)?.checked } });
+          m.close();
+          await load();
+          toast('Name updated');
+        } catch (err) { $('#payee-name-error', m.el).textContent = err.message; button.disabled = false; }
       };
     };
     $('#b-skip').onclick = skip; $('#b-undo').onclick = undo;
