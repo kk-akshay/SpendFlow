@@ -59,6 +59,8 @@ def parse_card(pages):
             break
         if in_table and any("Customer Care Service" in x or "RBI Ombudsman" in x for x in lines[:25]):
             break
+        if not in_table:
+            continue
         for line in lines:
             if "All Transactions" in line or ("Date" in line and "Amount (INR)" in line):
                 continue
