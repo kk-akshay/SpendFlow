@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS statements(
   parser TEXT,                                -- columns | text | gpay | ai
   status TEXT NOT NULL DEFAULT 'preview',     -- preview | imported
   warnings TEXT NOT NULL DEFAULT '[]',
+  card_meta TEXT NOT NULL DEFAULT '{}',
   date_from TEXT,
   date_to TEXT,
   txn_count INTEGER NOT NULL DEFAULT 0,
@@ -325,6 +326,9 @@ def init_db() -> None:
             conn.execute("ALTER TABLE accounts ADD COLUMN card_credit_limit_minor INTEGER NOT NULL DEFAULT 0")
         if "card_opening_outstanding_minor" not in account_columns:
             conn.execute("ALTER TABLE accounts ADD COLUMN card_opening_outstanding_minor INTEGER NOT NULL DEFAULT 0")
+        statement_columns = {r["name"] for r in conn.execute("PRAGMA table_info(statements)")}
+        if "card_meta" not in statement_columns:
+            conn.execute("ALTER TABLE statements ADD COLUMN card_meta TEXT NOT NULL DEFAULT '{}'")
         conn.commit()
     finally:
         conn.close()

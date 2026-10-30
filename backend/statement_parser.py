@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from . import parse_llm
+from . import parse_llm, parse_card
 from .extract import Extracted, extract_document
 from .merchants import extract_merchant, merchant_key
 from .parse_bank import parse_bank
@@ -31,6 +31,7 @@ class ParseResult:
     account_name: str | None = None
     account_last4: str | None = None
     ocr_used: bool = False
+    card_info: dict = field(default_factory=dict)
 
 
 def _head_text(ex: Extracted, pages: int = 2) -> str:
@@ -98,6 +99,24 @@ def parse_file(path: str, kind: str, password: str | None = None, use_ai: bool =
     res = ParseResult(warnings=list(ex.warnings), ocr_used=ex.ocr_used)
     head = _head_text(ex)
     gpay_hint = looks_like_gpay(head)
+
+    card_info = parse_card.detect_card(ex.pages)
+    if card_info:
+        rows, card_warnings, info = parse_card.parse_card(ex.pages)
+        res.parser, res.source_type, res.card_info = "supercard", "card", info
+        res.warnings.extend(card_warnings)
+        rows, dropped = _validate(rows)
+        if dropped: res.warnings.append(f"{dropped} card row(s) could not be validated.")
+        for r in rows:
+            r.setdefault("flags", [])
+            r.setdefault("ref", None)
+            r.setdefault("time", None)
+            r["merchant"] = extract_merchant(r["description"])
+            r["merchant_key"] = merchant_key(r["merchant"])
+        res.rows = rows
+        res.account_name = info["name"]
+        res.account_last4 = info["last4"]
+        return res
 
     rows: list[dict] = []
     if use_ai and parse_llm.available():
