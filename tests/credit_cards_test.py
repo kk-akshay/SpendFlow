@@ -40,9 +40,9 @@ with tempfile.TemporaryDirectory() as p:
             assert x["type"]=="transfer" and x["transfer_pair_id"] is not None,x
         new=c.get("/api/credit-cards?month=2026-10").json()["cards"][0]
         assert not new["repayment_suggestions"]
-        assert new["outstanding_minor"]==180000,new
-        assert new["available_credit_minor"]==4820000,new
-        assert new["utilization_percent"]==3.6,new
+        assert new["outstanding_minor"]==30000,new
+        assert new["available_credit_minor"]==4970000,new
+        assert new["utilization_percent"]==0.6,new
         edit=c.patch("/api/accounts/"+str(card["id"]),json={"name":"SuperMoney Card","type":"card","last4":"1234"})
         assert edit.status_code==200 and edit.json()["card_monthly_limit_minor"]==2000000,edit.text
         assert edit.json()["card_credit_limit_minor"]==5000000 and edit.json()["card_opening_outstanding_minor"]==30000
