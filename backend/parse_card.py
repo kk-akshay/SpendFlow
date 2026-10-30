@@ -16,7 +16,9 @@ def detect_card(pages):
         lim=re.search(r"Total Limit:\s*₹\s*([\d,]+\.\d{2})",top,re.I)
         dates=re.findall(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9}),?\s+(20\d{2})\b",top,re.I)
         dates=[parse_date(" ".join(d)) for d in dates]
-        due_amount=re.search(r"Total Amount Due\s+₹\s*([\d,]+\.\d{2})",top,re.I)
+        due_line=next((line for line in top.splitlines() if re.search(r"\\b\\d{1,2}(?:st|nd|rd|th)?\\s+[A-Za-z]{3},?\\s+20\\d{2}\\s+₹",line)), "")
+        due_values=re.findall(r"₹\\s*([\\d,]+\\.\\d{2})",due_line)
+        due_amount=re.search(r"Total Amount Due\\s+₹\\s*([\\d,]+\\.\\d{2})",top,re.I)
         minimum=re.search(r"Minimum Amount Due\s+₹\s*([\d,]+\.\d{2})",top,re.I)
         return {"name":"SuperMoney SuperCard", "last4":m.group(1) if m else None,
                 "limit_minor":to_minor(lim.group(1)) if lim else None,
@@ -25,8 +27,8 @@ def detect_card(pages):
                 "billing_start":dates[1] if len(dates)>1 else None,
                 "billing_end":dates[2] if len(dates)>2 else None,
                 "due_date":dates[3] if len(dates)>3 else None,
-                "amount_due_minor":to_minor(due_amount.group(1)) if due_amount else None,
-                "minimum_due_minor":to_minor(minimum.group(1)) if minimum else None}
+                "amount_due_minor":to_minor(due_values[0]) if due_values else (to_minor(due_amount.group(1)) if due_amount else None),
+                "minimum_due_minor":to_minor(due_values[1]) if len(due_values)>1 else (to_minor(minimum.group(1)) if minimum else None)}
     return None
 
 def parse_card(pages):
