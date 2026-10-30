@@ -257,7 +257,7 @@ routes.transactions = async (main, [pre]) => {
   else if (pre === 'uncategorized') f.category = 'uncategorized';
   else if (pre && pre.startsWith('cat-')) { const [, c, mo] = pre.split('-').concat([]); f.category = c === 'uncategorized' ? 'uncategorized' : c; if (mo) { const y = pre.split('-')[2], mm = pre.split('-')[3]; f.from = `${y}-${mm}-01`; f.to = `${y}-${mm}-31`; } }
   let selected = new Set(), data = null, timer;
-  main.innerHTML = `<div class="head"><div><h1>${f.dup ? 'Possible duplicates' : 'Transactions'}</h1><p class="sub" id="sub"></p></div><div class="row"><a class="btn sm" href="/api/export.csv" download>Export CSV</a><button class="btn primary sm" id="imp">Import</button></div></div>
+  main.innerHTML = `<div class="head"><div><h1>${f.dup ? 'Possible duplicates' : 'Transactions'}</h1><p class="sub" id="sub"></p></div><div class="row"><button class="btn primary sm" id="imp">Import</button></div></div>
     <div id="dupbox"></div><div class="row" style="margin-bottom:12px"><button class="btn sm" id="add-manual">+ Add transaction</button><a class="btn sm" href="#/calendar">Calendar</a><button class="btn sm" id="show-removed">Removed transactions</button></div>
     <div class="card flat" style="margin-bottom:16px"><div class="grid g3" style="margin-bottom:10px"><input id="q" type="search" placeholder="Search merchant, note, amount…" aria-label="Search" value="${esc(f.q)}">
       <select id="fcat" aria-label="Category"><option value="">All categories</option><option value="uncategorized">Needs a category</option>${S.cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
