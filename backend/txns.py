@@ -298,7 +298,11 @@ def _build_item(db, user_id: int, row) -> dict:
         p = db.execute("SELECT t.date, t.amount_minor, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
                        "WHERE t.id=?", (t["transfer_pair_id"],)).fetchone()
         pair = dict(p) if p else None
-    return {"txn": t, "suggestion": suggest(db, user_id, t), "similar_count": similar, "pair": pair}
+    from .payee_names import identity_details
+    payee_info = identity_details(t.get("description") or "")
+    return {"txn": t, "suggestion": suggest(db, user_id, t), "similar_count": similar, "pair": pair,
+            "payee_memory_available": bool(payee_info),
+            "payee_identity_label": payee_info["label"] if payee_info else None}
 
 
 def next_item(db, user_id: int, scope: str = "pending", order: str = "desc") -> dict | None:

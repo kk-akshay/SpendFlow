@@ -235,6 +235,13 @@ CREATE TABLE IF NOT EXISTS import_jobs(
 );
 CREATE INDEX IF NOT EXISTS idx_import_jobs_user ON import_jobs(user_id,status);
 
+CREATE TABLE IF NOT EXISTS payee_name_rules(
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  identity TEXT NOT NULL,
+  name TEXT NOT NULL,
+  PRIMARY KEY(user_id,identity)
+);
+
 CREATE TABLE IF NOT EXISTS tags(
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
