@@ -11,7 +11,7 @@ with tempfile.TemporaryDirectory() as p:
         r=c.post("/api/auth/register",json={"email":"cards@example.com","password":"password123"})
         assert r.status_code==200,r.text
         b=c.post("/api/accounts",json={"name":"KGB","type":"bank"}).json()
-        cc=c.post("/api/accounts",json={"name":"SuperMoney","type":"card","card_monthly_limit_minor":2000000})
+        cc=c.post("/api/accounts",json={"name":"SuperMoney","type":"card","card_monthly_limit_minor":2000000,"card_credit_limit_minor":5000000,"card_opening_outstanding_minor":30000})
         assert cc.status_code==200,cc.text
         card=cc.json()
         assert card["card_monthly_limit_minor"]==2000000
@@ -20,6 +20,9 @@ with tempfile.TemporaryDirectory() as p:
         overview=c.get("/api/credit-cards?month=2026-10").json()["cards"][0]
         assert overview["spent_minor"]==150000,overview
         assert overview["remaining_minor"]==1850000
+        assert overview["outstanding_minor"]==180000,overview
+        assert overview["available_credit_minor"]==4820000,overview
+        assert overview["utilization_percent"]==3.6,overview
         bank=c.post("/api/transactions",json={"account_id":b["id"],"date":"2026-10-16","amount_minor":150000,"direction":"debit","description":"SuperMoney credit card payment"}).json()
         credit=c.post("/api/transactions",json={"account_id":card["id"],"date":"2026-10-16","amount_minor":150000,"direction":"credit","description":"Card bill received"}).json()
         all_txns=c.get("/api/transactions?sort=date_desc&limit=100").json()["items"]
@@ -37,6 +40,10 @@ with tempfile.TemporaryDirectory() as p:
             assert x["type"]=="transfer" and x["transfer_pair_id"] is not None,x
         new=c.get("/api/credit-cards?month=2026-10").json()["cards"][0]
         assert not new["repayment_suggestions"]
+        assert new["outstanding_minor"]==30000,new
+        assert new["available_credit_minor"]==4970000,new
+        assert new["utilization_percent"]==0.6,new
         edit=c.patch("/api/accounts/"+str(card["id"]),json={"name":"SuperMoney Card","type":"card","last4":"1234"})
         assert edit.status_code==200 and edit.json()["card_monthly_limit_minor"]==2000000,edit.text
+        assert edit.json()["card_credit_limit_minor"]==5000000 and edit.json()["card_opening_outstanding_minor"]==30000
 print("Credit card checks passed")

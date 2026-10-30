@@ -248,16 +248,21 @@ routes.transactions = async (main, [pre]) => {
       <div class="field"><label>Last 4 digits (optional)</label><input id="card-last4" maxlength="4" inputmode="numeric" value="${esc(account?.last4||'')}"></div>
       <div class="field" id="card-limit-field"><label>Monthly card spending limit (₹)</label>
       <input id="card-limit" inputmode="decimal" value="${account?.card_monthly_limit_minor ? (account.card_monthly_limit_minor/100).toFixed(2) : ''}" placeholder="e.g. 20000">
-      <div class="small muted">A monthly budget for purchases, not the bank's credit limit.</div></div>
+      <div class="small muted">Optional monthly spending budget (does not reset when you repay).</div></div>
+      <div class="field card-credit-field"><label>Card credit limit (₹)</label><input id="credit-limit" inputmode="decimal" value="${account?.card_credit_limit_minor ? (account.card_credit_limit_minor/100).toFixed(2) : ''}" placeholder="e.g. 50000"></div>
+      <div class="field card-credit-field"><label>Opening outstanding (₹, optional)</label><input id="opening-outstanding" inputmode="decimal" value="${account?.card_opening_outstanding_minor ? (account.card_opening_outstanding_minor/100).toFixed(2) : ''}" placeholder="0">
+      <div class="small muted">Only enter a balance from before your earliest imported card transaction; otherwise leave 0 to avoid counting it twice.</div></div>
       <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="card-save">Save account</button></div>`);
     $('[data-x]',m.el).onclick=()=>m.close();
-    const setType=()=>$('#card-limit-field',m.el).hidden=$('#card-type',m.el).value!=='card';
+    const setType=()=>{const isCard=$('#card-type',m.el).value==='card';$('#card-limit-field',m.el).hidden=!isCard;$('.card-credit-field',m.el).forEach(x=>x.hidden=!isCard);};
     $('#card-type',m.el).onchange=setType;setType();
     $('#card-save',m.el).onclick=async()=>{
       try{
         const body={name:$('#card-name',m.el).value.trim(),type:$('#card-type',m.el).value,
           last4:$('#card-last4',m.el).value.trim()||null,
-          card_monthly_limit_minor:$('#card-type',m.el).value==='card'?toMinor($('#card-limit',m.el).value||'0'):0};
+          card_monthly_limit_minor:$('#card-type',m.el).value==='card'?toMinor($('#card-limit',m.el).value||'0'):0,
+          card_credit_limit_minor:$('#card-type',m.el).value==='card'?toMinor($('#credit-limit',m.el).value||'0'):0,
+          card_opening_outstanding_minor:$('#card-type',m.el).value==='card'?toMinor($('#opening-outstanding',m.el).value||'0'):0};
         if(!body.name)throw new Error('Enter an account name.');
         await api(account?'/accounts/'+account.id:'/accounts',{method:account?'PATCH':'POST',body});
         m.close();await loadRef();route();
@@ -514,6 +519,13 @@ routes.cards = async (main) => {
     const data=await api('/credit-cards?month='+encodeURIComponent(month));
     main.innerHTML=`<div class="head"><div><h1>Credit Cards</h1><p class="sub">Monthly spending and possible repayments</p></div><input type="month" id="card-month" value="${esc(month)}" aria-label="Card spending month"></div>
       <div class="grid g2">${data.cards.map(c=>`<section class="card"><h2>${esc(c.name)} ${c.last4?'••'+esc(c.last4):''}</h2>
+      <div class="credit-summary">
+        <div><span class="small muted">Available credit</span><div class="value">${c.available_credit_minor===null?'Set credit limit':money(c.available_credit_minor)}</div></div>
+        <div class="row" style="justify-content:space-between;margin:10px 0"><span class="small muted">Outstanding</span><b>${money(c.outstanding_minor)}</b></div>
+        <div class="row" style="justify-content:space-between"><span class="small muted">Credit utilization</span><b>${c.utilization_percent===null?'—':c.utilization_percent+'%'}</b></div>
+        <div class="bar" style="margin:8px 0"><i style="width:${Math.min(100,c.utilization_percent||0)}%"></i></div>
+        <p class="small muted">Total credit limit: ${c.credit_limit_minor?money(c.credit_limit_minor):'Not set'} · Includes card debits and credits across all imported dates. Actual bank balance may differ.</p>
+      </div>
       <div class="small muted" style="margin:12px 0 5px">Spent this month</div><div class="value">${money(c.spent_minor)}</div>
       <p class="muted small">Monthly budget: ${c.monthly_limit_minor?money(c.monthly_limit_minor):'Not set'}${c.usage_percent!==null?' · '+c.usage_percent+'% used':''}</p>
       <div class="bar" style="margin:10px 0"><i style="width:${Math.min(100,c.usage_percent||0)}%"></i></div>
