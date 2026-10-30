@@ -155,7 +155,7 @@ def detect_transfers(db, user_id: int, ids: list[int]) -> int:
         return 0
     marks = ",".join("?" * len(ids))
     rows = db.execute(
-        f"SELECT t.*, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
+        f"SELECT t.*, a.name AS account_name, a.type AS account_type FROM transactions t JOIN accounts a ON a.id=t.account_id "
         f"WHERE t.id IN ({marks}) AND t.status='pending' "
         f"AND (t.dup_status IS NULL OR t.dup_status='cleared')", ids).fetchall()
     if not rows:
@@ -163,7 +163,7 @@ def detect_transfers(db, user_id: int, ids: list[int]) -> int:
     start = (min(date.fromisoformat(r["date"]) for r in rows) - timedelta(days=3)).isoformat()
     end = (max(date.fromisoformat(r["date"]) for r in rows) + timedelta(days=3)).isoformat()
     possible = db.execute(
-        "SELECT t.*, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
+        "SELECT t.*, a.name AS account_name, a.type AS account_type FROM transactions t JOIN accounts a ON a.id=t.account_id "
         "WHERE t.user_id=? AND t.date BETWEEN ? AND ? "
         "AND t.status IN ('pending','categorized','skipped') "
         "AND (t.dup_status IS NULL OR t.dup_status='cleared') "
