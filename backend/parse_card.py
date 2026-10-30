@@ -24,13 +24,15 @@ def detect_card(pages):
 def parse_card(pages):
     info=detect_card(pages)
     if not info: return [],["Unsupported credit-card format"],{}
-    rows=[]; warnings=[]; in_table=False
+    rows=[]; warnings=[]; in_table=False; pending_purchase=None
     for pi,page in enumerate(pages):
         lines=_text(page,pi)
         if "All Transactions" in "\\n".join(lines[:10]):
             in_table=True
         elif pi>0 and not in_table:
             continue
+        elif pi>0 and not any("Date" in x and "Amount (INR)" in x for x in lines[:5]):
+            break
         if in_table and any("Customer Care Service" in x or "RBI Ombudsman" in x for x in lines[:25]):
             break
         for line in lines:
@@ -38,6 +40,12 @@ def parse_card(pages):
                 continue
             m=DATE.match(line)
             if not m:
+                if in_table:
+                    loose=AMOUNT.search(line)
+                    if loose and not re.search(r"Fuel Surcharge",line,re.I):
+                        merchant=line[:loose.start()].strip()
+                        if merchant and not re.search(r"(?i)total|statement|example|balance|due",merchant):
+                            pending_purchase=(merchant,to_minor(loose.group(2)))
                 # Fuel surcharge is a separate debit on a line immediately following its purchase.
                 if rows and re.search(r"Fuel Surcharge",line,re.I):
                     a=AMOUNT.search(line)
@@ -50,7 +58,13 @@ def parse_card(pages):
             if not iso: continue
             tail=line[m.end():].strip()
             a=list(AMOUNT.finditer(tail))
-            if not a: continue
+            if not a:
+                if pending_purchase:
+                    merchant, amount = pending_purchase
+                    rows.append({"date":iso,"description":merchant,"amount_minor":amount,"direction":"debit","flags":[]})
+                    pending_purchase=None
+                continue
+            pending_purchase=None
             amt=a[-1]
             description=tail[:amt.start()].strip()
             description=re.sub(r"^(?:UPI|Online)\\s+","",description,flags=re.I).strip()
