@@ -374,3 +374,11 @@ input[type="checkbox"],input[type="radio"]{accent-color:var(--accent)}
 .month-picker-today{display:block;margin-top:12px;width:100%;padding:9px;text-align:center;border-color:var(--line);font-size:13px;font-weight:600}
 .month-picker-today:hover{background:var(--surface2)}
 @media(max-width:760px){#card-month-control,.month-picker{width:100%;flex:1 1 100%}.month-picker-popup{right:0;left:auto}.month-picker-grid button{min-height:48px}}
+
+/* Keep daily date fields consistent without replacing accessible native day selection. */
+input[type="date"]{min-height:44px;border-radius:11px;background:var(--input);border:1px solid var(--line);color:var(--text);padding:9px 12px}
+input[type="date"]:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+input[type="date"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.8}
+#day-controls{gap:8px}
+#day-controls #chosen-day{min-width:0!important;flex:1 1 150px!important}
+@media(max-width:420px){#day-controls #chosen-day{flex-basis:100%!important;order:-1}#day-controls .btn{flex:1 1 auto}}
