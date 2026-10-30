@@ -449,17 +449,32 @@ def confirm_card_repayment(card_id: int, bank_txn_id: int, user=Depends(current_
 
 def _resolve_account(db, uid, account_id, new_name, new_type, res, cache: dict) -> int:
     if account_id:
-        return _own_account(db, uid, account_id)["id"]
+        chosen = _own_account(db, uid, account_id)
+        if res.source_type == "card" and chosen["type"] != "card":
+            raise ValueError("Credit-card statements must be imported into a credit-card account.")
+        return chosen["id"]
     if new_name:
         if "new" not in cache:
-            t = new_type if new_type in ("bank", "upi", "card", "cash") else "bank"
+            t = "card" if res.source_type == "card" else (new_type if new_type in ("bank", "upi", "card", "cash") else "bank")
             cache["new"] = db.execute("INSERT INTO accounts(user_id,name,type) VALUES(?,?,?)", (uid, new_name.strip()[:60], t)).lastrowid
         return cache["new"]
     name = res.account_name or ("Google Pay" if res.source_type == "gpay" else "Bank account")
-    row = db.execute("SELECT id FROM accounts WHERE user_id=? AND name=? AND (last4 IS NULL OR ?='' OR last4=?)",
+    if res.source_type == "card" and not res.account_last4:
+        raise ValueError("Card number was not detected; choose an existing card account.")
+    if res.source_type == "card":
+        matches = db.execute("SELECT id FROM accounts WHERE user_id=? AND type='card' AND last4=?", (uid, res.account_last4)).fetchall()
+        if len(matches) > 1:
+            raise ValueError("Multiple cards share these last four digits; choose the correct card.")
+        row = matches[0] if matches else None
+    else:
+        row = db.execute("SELECT id FROM accounts WHERE user_id=? AND type!='card' AND name=? AND (last4 IS NULL OR ?='' OR last4=?)",
                      (uid, name, res.account_last4 or "", res.account_last4 or "")).fetchone()
     if row:
         return row["id"]
+    if res.source_type == "card":
+        info = res.card_info
+        return db.execute("INSERT INTO accounts(user_id,name,type,last4,card_credit_limit_minor) VALUES(?,?,?,?,?)",
+                          (uid,name,"card",res.account_last4,info.get("limit_minor") or 0)).lastrowid
     return db.execute("INSERT INTO accounts(user_id,name,type,last4) VALUES(?,?,?,?)",
                       (uid, name, "upi" if res.source_type == "gpay" else "bank", res.account_last4)).lastrowid
 
