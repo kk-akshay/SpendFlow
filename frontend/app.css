@@ -350,3 +350,8 @@ input[type="checkbox"],input[type="radio"]{accent-color:var(--accent)}
 .mobile-nav .badge{position:absolute;top:1px;right:clamp(5px,15%,22px);min-width:17px;max-width:38px;padding:1px 4px;border-radius:11px;background:var(--accent);color:var(--accent-ink);font-size:9px;font-weight:750;line-height:1.4;overflow:hidden;text-overflow:ellipsis}
 .more-group+.more-group{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}
 .more-section-title{font-size:11px;font-weight:700;letter-spacing:.045em;text-transform:uppercase;color:var(--muted);padding:4px 12px 6px;margin:0}
+
+.review-payee-heading{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:12px 0 6px}
+.review-payee-heading .merchant{min-width:0;flex:1;overflow-wrap:anywhere}
+.review-payee-heading .btn{white-space:nowrap;flex:none}
+@media(max-width:390px){.review-payee-heading .merchant{font-size:22px}.review-payee-heading .btn{font-size:12px}}
