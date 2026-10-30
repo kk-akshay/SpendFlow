@@ -151,3 +151,4 @@ def init_postgres(sqlite_schema: str):
         conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS card_monthly_limit_minor BIGINT NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS card_credit_limit_minor BIGINT NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS card_opening_outstanding_minor BIGINT NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE statements ADD COLUMN IF NOT EXISTS card_meta TEXT NOT NULL DEFAULT '{}'")
