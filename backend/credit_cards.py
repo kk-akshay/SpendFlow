@@ -41,10 +41,27 @@ def overview(db, uid, month=None):
                     continue
                 suggestions.append({"bank_txn_id":bank["id"],"card_txn_id":c["id"],"date":bank["date"],
                                     "amount_minor":bank["amount_minor"],"description":bank["description"][:130]})
+        # Balance is calculated over the complete imported card history, not just
+        # the selected month. Card debits increase what is owed, and card credits
+        # (repayments/refunds) decrease it, even when classified as transfers.
+        # Opening outstanding must represent the balance before imported history.
+        movements = db.execute(
+            f"SELECT t.direction,t.amount_minor FROM transactions t WHERE t.user_id=? "
+            f"AND t.account_id=? AND {ACTIVE}",
+            (uid,card["id"])).fetchall()
+        outstanding = max(0, (card["card_opening_outstanding_minor"] or 0) +
+                          sum(x["amount_minor"] if x["direction"]=="debit" else -x["amount_minor"]
+                              for x in movements))
+        credit_limit = card["card_credit_limit_minor"] or 0
+        available = max(0, credit_limit - outstanding) if credit_limit else None
+        utilization = round(100*outstanding/credit_limit,1) if credit_limit else None
         results.append({"id":card["id"],"name":card["name"],"last4":card["last4"],
                         "monthly_limit_minor":limit,"month":month,"spent_minor":spent,
                         "remaining_minor":max(0,limit-spent) if limit else None,
                         "usage_percent":round(100*spent/limit,1) if limit else None,
+                        "credit_limit_minor":credit_limit,"opening_outstanding_minor":card["card_opening_outstanding_minor"] or 0,
+                        "outstanding_minor":outstanding,"available_credit_minor":available,
+                        "utilization_percent":utilization,
                         "repayment_suggestions":suggestions[:40]})
     return {"month":month,"cards":results}
 
