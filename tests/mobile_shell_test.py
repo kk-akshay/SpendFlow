@@ -23,5 +23,7 @@ assert "aria-current" in app and "closeMore(false)" in app
 assert "syncThemeButton" in app and "setTheme(next)" in app
 assert "color-scheme:dark" in css
 assert "#121316" in css and "#F8F9FA" in css
-assert "href=\"/api/export.csv\"" in shell
+assert 'href="/api/export.csv"' in (root/"pages.js").read_text(encoding="utf-8")
+assert "mobile-export" not in shell
+assert "['accounts','Accounts']" in shell
 print("Responsive navigation checks passed")
