@@ -396,7 +396,7 @@ routes.settings = async (main) => {
     const search = $('#category-search').value.trim().toLowerCase();
     const kind = $('#category-kind').value;
     let shown = 0;
-    $('.category-compact-row', $('#settings-category-list')).forEach(row => {
+    $$('.category-compact-row', $('#settings-category-list')).forEach(row => {
       const visible = row.dataset.categoryName.includes(search) && (kind === 'all' || row.dataset.categoryKind === kind);
       row.hidden = !visible;
       if (visible) shown++;
