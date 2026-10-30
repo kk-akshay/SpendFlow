@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from .merchants import SELF_TRANSFER, extract_merchant, merchant_key
 from .statement_parser import ParseResult
 from .txns import now
-from . import ledger
+from . import ledger, payee_names
 
 STAGED_OR_LIVE = "('pending','categorized','skipped','staged')"
 
@@ -25,17 +25,18 @@ def _related(a: str, b: str) -> bool:
 def create_statement(db, user_id: int, account_id: int, filename: str, stored_path: str, sha: str, mime: str,
                      res: ParseResult) -> int:
     cur = db.execute(
-        "INSERT INTO statements(user_id,account_id,filename,stored_path,sha256,mime,source_type,parser,status,warnings) "
-        "VALUES(?,?,?,?,?,?,?,?,'preview',?)",
-        (user_id, account_id, filename, stored_path, sha, mime, res.source_type, res.parser, json.dumps(res.warnings)))
+        "INSERT INTO statements(user_id,account_id,filename,stored_path,sha256,mime,source_type,parser,status,warnings,card_meta) "
+        "VALUES(?,?,?,?,?,?,?,?,'preview',?,?)",
+        (user_id, account_id, filename, stored_path, sha, mime, res.source_type, res.parser, json.dumps(res.warnings), json.dumps(res.card_info)))
     sid = cur.lastrowid
     # One batched DB operation rather than hundreds of network round trips.
     # Keep insert_staged_row() for manual preview-row edits (which need lastrowid).
+    remembered_names = payee_names.all_rules(db, user_id)
     params = [
         (user_id, account_id, sid, r["date"], r.get("time"), r["amount_minor"],
-         r["direction"], "income" if r["direction"] == "credit" else "expense",
-         r.get("merchant", ""), r.get("merchant_key", ""), r.get("description", ""),
-         r.get("ref"), r.get("balance_minor"), json.dumps(r.get("flags", [])))
+         r["direction"], ("transfer" if res.source_type == "card" and "Credit card repayment" in r.get("flags", []) else ("expense" if res.source_type == "card" else ("income" if r["direction"] == "credit" else "expense"))),
+         *payee_names.renamed_fields(r, remembered_names),
+         r.get("description", ""), r.get("ref"), r.get("balance_minor"), json.dumps(r.get("flags", [])))
         for r in res.rows
     ]
     db.executemany(
@@ -48,7 +49,8 @@ def create_statement(db, user_id: int, account_id: int, filename: str, stored_pa
 
 
 def insert_staged_row(db, user_id: int, account_id: int, statement_id: int, r: dict) -> int:
-    ttype = "income" if r["direction"] == "credit" else "expense"
+    account = db.execute("SELECT type FROM accounts WHERE id=? AND user_id=?", (account_id,user_id)).fetchone()
+    ttype = ("transfer" if account and account["type"] == "card" and "Credit card repayment" in r.get("flags", []) else ("expense" if account and account["type"] == "card" else ("income" if r["direction"] == "credit" else "expense")))
     cur = db.execute(
         "INSERT INTO transactions(user_id,account_id,statement_id,date,time,amount_minor,direction,type,merchant,"
         "merchant_key,description,ref,balance_minor,status,flags) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'staged',?)",
@@ -126,7 +128,7 @@ def mark_duplicates(db, user_id: int, statement_id: int) -> dict:
 def _candidates(db, user_id: int, r) -> list:
     d = date.fromisoformat(r["date"])
     return db.execute(
-        "SELECT t.*, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
+        "SELECT t.*, a.name AS account_name, a.type AS account_type FROM transactions t JOIN accounts a ON a.id=t.account_id "
         "WHERE t.user_id=? AND t.id!=? AND t.account_id!=? AND t.amount_minor=? AND t.direction!=? "
         "AND t.date BETWEEN ? AND ? AND t.status IN ('pending','categorized','skipped') "
         "AND (t.dup_status IS NULL OR t.dup_status='cleared') AND t.transfer_pair_id IS NULL AND t.removed_at IS NULL "
@@ -153,7 +155,7 @@ def detect_transfers(db, user_id: int, ids: list[int]) -> int:
         return 0
     marks = ",".join("?" * len(ids))
     rows = db.execute(
-        f"SELECT t.*, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
+        f"SELECT t.*, a.name AS account_name, a.type AS account_type FROM transactions t JOIN accounts a ON a.id=t.account_id "
         f"WHERE t.id IN ({marks}) AND t.status='pending' "
         f"AND (t.dup_status IS NULL OR t.dup_status='cleared')", ids).fetchall()
     if not rows:
@@ -161,7 +163,7 @@ def detect_transfers(db, user_id: int, ids: list[int]) -> int:
     start = (min(date.fromisoformat(r["date"]) for r in rows) - timedelta(days=3)).isoformat()
     end = (max(date.fromisoformat(r["date"]) for r in rows) + timedelta(days=3)).isoformat()
     possible = db.execute(
-        "SELECT t.*, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
+        "SELECT t.*, a.name AS account_name, a.type AS account_type FROM transactions t JOIN accounts a ON a.id=t.account_id "
         "WHERE t.user_id=? AND t.date BETWEEN ? AND ? "
         "AND t.status IN ('pending','categorized','skipped') "
         "AND (t.dup_status IS NULL OR t.dup_status='cleared') "
@@ -190,6 +192,10 @@ def detect_transfers(db, user_id: int, ids: list[int]) -> int:
             _add_flag(db, r["id"], "Looks like a transfer between your own accounts")
             n += 1
         cands = candidates_for(r)
+        # Card bill payments require corroborating narration and an explicit
+        # confirmation through the credit-card repayment matcher.
+        if r["account_type"] == "card" or any(c["account_type"] == "card" for c in cands):
+            continue
         if len(cands) != 1:
             continue
         c = cands[0]
