@@ -595,6 +595,30 @@ def _own_statement(db, uid: int, sid: int):
     return r
 
 
+class CardImportAccount(BaseModel):
+    account_id: int
+
+@app.patch("/api/imports/{sid}/card-account")
+def set_import_card_account(sid: int, body: CardImportAccount, user=Depends(current_user), db=Depends(get_db)):
+    """Move a staged card statement to an existing credit-card account before import."""
+    st = _own_statement(db, user["id"], sid)
+    if st["status"] != "preview" or st["source_type"] != "card":
+        raise HTTPException(400, "Only pending credit-card imports can change accounts.")
+    dest = _own_account(db,user["id"],body.account_id)
+    if dest["type"] != "card":
+        raise HTTPException(400, "Choose a credit-card account.")
+    meta = json.loads(st["card_meta"] or "{}")
+    if meta.get("last4") and dest["last4"] and meta["last4"] != dest["last4"]:
+        raise HTTPException(400, "Card number does not match the statement.")
+    db.execute("UPDATE statements SET account_id=? WHERE id=? AND user_id=?", (dest["id"],sid,user["id"]))
+    db.execute("UPDATE transactions SET account_id=? WHERE statement_id=? AND user_id=? AND status='staged'",
+               (dest["id"],sid,user["id"]))
+    from .importing import mark_duplicates
+    mark_duplicates(db,user["id"],sid)
+    db.commit()
+    return {"ok":True,"account_id":dest["id"]}
+
+
 @app.get("/api/imports/{sid}")
 def import_preview(sid: int, user=Depends(current_user), db=Depends(get_db)):
     st = _own_statement(db, user["id"], sid)
@@ -609,7 +633,7 @@ def import_preview(sid: int, user=Depends(current_user), db=Depends(get_db)):
         rows.append(d)
     return {
         "statement": {**{k: st[k] for k in ("id", "filename", "source_type", "parser", "status", "account_id", "account_name")},
-                      "warnings": json.loads(st["warnings"])},
+                      "warnings": json.loads(st["warnings"]), "card_meta": json.loads(st["card_meta"] or "{}") },
         "rows": rows,
         "summary": {
             "count": len(rows),
