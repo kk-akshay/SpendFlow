@@ -1,5 +1,6 @@
 /* Responsive navigation shell: desktop sidebar, fixed five-item mobile dock, accessible More sheet. */
 const ICON = {
+  accounts: '<rect x="3" y="5" width="18" height="15" rx="2"/><path d="M3 10h18M7 16h4"/>',
   dashboard: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   review: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="m9 12 2 2 4-4"/>',
   transactions: '<path d="M5 3h14v18l-3.5-2-3.5 2-3.5-2L5 21V3Z"/><path d="M9 8h6M9 12h6"/>',
@@ -24,16 +25,16 @@ function brandLogo() {
 }
 const DESKTOP_TABS = [
   ['dashboard','Home'], ['review','Review'], ['transactions','History'],
-  ['groups','Linked Money'], ['cards','Credit Cards'], ['people','People & Loans'], ['calendar','Calendar'],
+  ['accounts','Accounts'], ['people','People & Loans'], ['calendar','Calendar'],
   ['tags','Tags & Trips'], ['plan','Plan'], ['settings','Settings']
 ];
 // Daily workflow stays visible; less frequent tools remain in More or contextual pages.
 const MOBILE_TABS = [
-  ['dashboard','Home'], ['review','Review'], ['transactions','History'], ['groups','Linked Money']
+  ['dashboard','Home'], ['review','Review'], ['transactions','History'], ['accounts','Accounts']
 ];
 const MORE_GROUPS = [
   { title: 'Explore your money', tabs: [
-    ['calendar','Calendar'], ['cards','Credit Cards'], ['people','People & Loans'], ['tags','Tags & Trips'], ['plan','Plan']
+    ['calendar','Calendar'], ['groups','Linked Money'], ['people','People & Loans'], ['tags','Tags & Trips'], ['plan','Plan']
   ] },
   { title: 'Settings & data', tabs: [['settings','Settings']] }
 ];
@@ -51,8 +52,6 @@ function renderShell() {
     group.tabs.map(([route,label])=>
       '<a class="more-item" href="#/'+route+'" data-more-link="'+route+'">'+svg(route)+'<span>'+label+'</span></a>'
     ).join('')+
-    (group.title==='Settings & data'?
-      '<a class="more-item" id="mobile-export" href="/api/export.csv" download>'+svg('export')+'<span>Export transactions</span></a>':'')+
     '</div>'
   ).join('');
   $('#app').innerHTML =
@@ -77,7 +76,6 @@ function renderShell() {
   $('#mobile-more-close').onclick = () => closeMore();
   $('#mobile-more-backdrop').onclick = () => closeMore();
   $$('[data-more-link]',overlay).forEach(a => a.addEventListener('click',()=>closeMore(false)));
-  $('#mobile-export').addEventListener('click',()=>closeMore(false));
   overlay.addEventListener('keydown', e => {
     if(e.key === 'Escape') { e.preventDefault(); closeMore(); return; }
     if(e.key !== 'Tab') return;
