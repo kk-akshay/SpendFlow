@@ -1,6 +1,5 @@
 """Credit-card statement reader. Uses billing-table boundaries, never illustrative pages."""
 import re
-from collections import Counter
 from .parse_common import group_lines, parse_date, to_minor
 
 DATE = re.compile(r"^\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9}),?\s+(20\d{2})\b", re.I)
@@ -15,10 +14,19 @@ def detect_card(pages):
     if "Utkarsh Small Finance Bank" in top and ("super.money" in top.lower() or "total limit:" in top.lower()):
         m=LAST4.search(top)
         lim=re.search(r"Total Limit:\s*₹\s*([\d,]+\.\d{2})",top,re.I)
-        due=re.search(r"Payment Due Date.*?Total Amount Due",top,re.I)
+        dates=re.findall(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9}),?\s+(20\d{2})\b",top,re.I)
+        dates=[parse_date(" ".join(d)) for d in dates]
+        due_amount=re.search(r"Total Amount Due\s+₹\s*([\d,]+\.\d{2})",top,re.I)
+        minimum=re.search(r"Minimum Amount Due\s+₹\s*([\d,]+\.\d{2})",top,re.I)
         return {"name":"SuperMoney SuperCard", "last4":m.group(1) if m else None,
                 "limit_minor":to_minor(lim.group(1)) if lim else None,
-                "issuer":"Utkarsh Small Finance Bank"}
+                "issuer":"Utkarsh Small Finance Bank",
+                "statement_date":dates[0] if dates else None,
+                "billing_start":dates[1] if len(dates)>1 else None,
+                "billing_end":dates[2] if len(dates)>2 else None,
+                "due_date":dates[3] if len(dates)>3 else None,
+                "amount_due_minor":to_minor(due_amount.group(1)) if due_amount else None,
+                "minimum_due_minor":to_minor(minimum.group(1)) if minimum else None}
     return None
 
 def parse_card(pages):
