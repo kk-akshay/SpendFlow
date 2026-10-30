@@ -40,8 +40,9 @@ def overview(db, uid, month=None):
         # amounts alone: require a card credit and a bank-side payment clue.
         credits=[dict(t) for t in db.execute(
             f"SELECT t.* FROM transactions t WHERE t.user_id=? AND t.account_id=? "
-            f"AND t.direction='credit' AND t.type='transfer' AND {ACTIVE} AND t.transfer_pair_id IS NULL",
+            f"AND t.direction='credit' AND {ACTIVE} AND t.transfer_pair_id IS NULL",
             (uid,card["id"]))]
+        credits=[c for c in credits if c["type"]=="transfer" or PAYMENT.search(c["description"]+" "+c["merchant"])]
         for bank in bank_rows:
             if not PAYMENT.search(bank["description"]+" "+bank["merchant"]):
                 continue
