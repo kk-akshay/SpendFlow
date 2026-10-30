@@ -128,7 +128,7 @@ def mark_duplicates(db, user_id: int, statement_id: int) -> dict:
 def _candidates(db, user_id: int, r) -> list:
     d = date.fromisoformat(r["date"])
     return db.execute(
-        "SELECT t.*, a.name AS account_name FROM transactions t JOIN accounts a ON a.id=t.account_id "
+        "SELECT t.*, a.name AS account_name, a.type AS account_type FROM transactions t JOIN accounts a ON a.id=t.account_id "
         "WHERE t.user_id=? AND t.id!=? AND t.account_id!=? AND t.amount_minor=? AND t.direction!=? "
         "AND t.date BETWEEN ? AND ? AND t.status IN ('pending','categorized','skipped') "
         "AND (t.dup_status IS NULL OR t.dup_status='cleared') AND t.transfer_pair_id IS NULL AND t.removed_at IS NULL "
@@ -192,6 +192,10 @@ def detect_transfers(db, user_id: int, ids: list[int]) -> int:
             _add_flag(db, r["id"], "Looks like a transfer between your own accounts")
             n += 1
         cands = candidates_for(r)
+        # Card bill payments require corroborating narration and an explicit
+        # confirmation through the credit-card repayment matcher.
+        if r["account_type"] == "card" or any(c["account_type"] == "card" for c in cands):
+            continue
         if len(cands) != 1:
             continue
         c = cands[0]
