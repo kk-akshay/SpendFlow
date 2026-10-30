@@ -1,6 +1,7 @@
 """Credit-card spend summaries and conservative repayment confirmation."""
 from datetime import date, timedelta
 import re
+import json
 
 ACTIVE = "t.status IN ('pending','categorized','skipped') AND t.removed_at IS NULL AND (t.dup_status IS NULL OR t.dup_status='cleared')"
 PAYMENT = re.compile(r"(?i)(credit.?card|card.?bill|cc.?payment|supermoney|card repayment|autopay)")
@@ -21,12 +22,25 @@ def overview(db, uid, month=None):
         spent-=sum(t["amount_minor"] for t in transactions if t["direction"]=="credit" and t["type"]=="expense")
         spent=max(0,spent)
         limit=card["card_monthly_limit_minor"] or 0
+        statements=[dict(st) for st in db.execute(
+            "SELECT id,card_meta,date_from,date_to FROM statements WHERE user_id=? AND account_id=? "
+            "AND status='imported' AND source_type='card' ORDER BY date_to DESC,id DESC LIMIT 24",
+            (uid,card["id"]))]
+        billing=[]
+        for st in statements:
+            try: meta=json.loads(st["card_meta"] or "{}")
+            except (ValueError,TypeError): meta={}
+            if meta.get("due_date") or meta.get("amount_due_minor") is not None:
+                billing.append({"statement_id":st["id"],"statement_date":meta.get("statement_date"),
+                    "billing_start":meta.get("billing_start"),"billing_end":meta.get("billing_end"),
+                    "due_date":meta.get("due_date"),"amount_due_minor":meta.get("amount_due_minor"),
+                    "minimum_due_minor":meta.get("minimum_due_minor")})
         suggestions=[]
         # Card credits are repayment evidence. Never infer repayments from equal
         # amounts alone: require a card credit and a bank-side payment clue.
         credits=[dict(t) for t in db.execute(
             f"SELECT t.* FROM transactions t WHERE t.user_id=? AND t.account_id=? "
-            f"AND t.direction='credit' AND {ACTIVE} AND t.transfer_pair_id IS NULL",
+            f"AND t.direction='credit' AND t.type='transfer' AND {ACTIVE} AND t.transfer_pair_id IS NULL",
             (uid,card["id"]))]
         for bank in bank_rows:
             if not PAYMENT.search(bank["description"]+" "+bank["merchant"]):
@@ -62,7 +76,7 @@ def overview(db, uid, month=None):
                         "credit_limit_minor":credit_limit,"opening_outstanding_minor":card["card_opening_outstanding_minor"] or 0,
                         "outstanding_minor":outstanding,"available_credit_minor":available,
                         "utilization_percent":utilization,
-                        "repayment_suggestions":suggestions[:40]})
+                        "repayment_suggestions":suggestions[:40],"billing_statements":billing})
     return {"month":month,"cards":results}
 
 
