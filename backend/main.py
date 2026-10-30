@@ -302,6 +302,8 @@ class AccountIn(BaseModel):
     type: str = "bank"
     last4: str | None = Field(default=None, max_length=4)
     card_monthly_limit_minor: int | None = Field(default=None, ge=0, le=10**13)
+    card_credit_limit_minor: int | None = Field(default=None, ge=0, le=10**13)
+    card_opening_outstanding_minor: int | None = Field(default=None, ge=0, le=10**13)
 
 
 def _own_account(db, uid: int, account_id: int):
@@ -322,8 +324,13 @@ def list_accounts(user=Depends(current_user), db=Depends(get_db)):
 @app.post("/api/accounts")
 def create_account(a: AccountIn, user=Depends(current_user), db=Depends(get_db)):
     t = a.type if a.type in ("bank", "upi", "card", "cash") else "bank"
-    cur = db.execute("INSERT INTO accounts(user_id,name,type,last4,card_monthly_limit_minor) VALUES(?,?,?,?,?)",
-                     (user["id"], a.name.strip(), t, (a.last4 or None), a.card_monthly_limit_minor if t=="card" and a.card_monthly_limit_minor is not None else 0))
+    cur = db.execute(
+        "INSERT INTO accounts(user_id,name,type,last4,card_monthly_limit_minor,card_credit_limit_minor,card_opening_outstanding_minor) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (user["id"], a.name.strip(), t, a.last4 or None,
+         (a.card_monthly_limit_minor or 0) if t=="card" else 0,
+         (a.card_credit_limit_minor or 0) if t=="card" else 0,
+         (a.card_opening_outstanding_minor or 0) if t=="card" else 0))
     db.commit()
     return dict(_own_account(db, user["id"], cur.lastrowid))
 
@@ -333,7 +340,10 @@ def update_account(account_id: int, a: AccountIn, user=Depends(current_user), db
     old_account = _own_account(db, user["id"], account_id)
     t = a.type if a.type in ("bank", "upi", "card", "cash") else "bank"
     monthly_limit = (a.card_monthly_limit_minor if a.card_monthly_limit_minor is not None else old_account["card_monthly_limit_minor"]) if t=="card" else 0
-    db.execute("UPDATE accounts SET name=?, type=?, last4=?, card_monthly_limit_minor=? WHERE id=?", (a.name.strip(), t, a.last4 or None, monthly_limit, account_id))
+    credit_limit = (a.card_credit_limit_minor if a.card_credit_limit_minor is not None else old_account["card_credit_limit_minor"]) if t=="card" else 0
+    opening = (a.card_opening_outstanding_minor if a.card_opening_outstanding_minor is not None else old_account["card_opening_outstanding_minor"]) if t=="card" else 0
+    db.execute("UPDATE accounts SET name=?, type=?, last4=?, card_monthly_limit_minor=?,card_credit_limit_minor=?,card_opening_outstanding_minor=? WHERE id=?",
+               (a.name.strip(), t, a.last4 or None, monthly_limit, credit_limit, opening, account_id))
     db.commit()
     return dict(_own_account(db, user["id"], account_id))
 

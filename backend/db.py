@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS accounts(
   type TEXT NOT NULL DEFAULT 'bank',
   last4 TEXT,
   card_monthly_limit_minor INTEGER NOT NULL DEFAULT 0,
+  card_credit_limit_minor INTEGER NOT NULL DEFAULT 0,
+  card_opening_outstanding_minor INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -319,6 +321,10 @@ def init_db() -> None:
         account_columns = {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
         if "card_monthly_limit_minor" not in account_columns:
             conn.execute("ALTER TABLE accounts ADD COLUMN card_monthly_limit_minor INTEGER NOT NULL DEFAULT 0")
+        if "card_credit_limit_minor" not in account_columns:
+            conn.execute("ALTER TABLE accounts ADD COLUMN card_credit_limit_minor INTEGER NOT NULL DEFAULT 0")
+        if "card_opening_outstanding_minor" not in account_columns:
+            conn.execute("ALTER TABLE accounts ADD COLUMN card_opening_outstanding_minor INTEGER NOT NULL DEFAULT 0")
         conn.commit()
     finally:
         conn.close()
