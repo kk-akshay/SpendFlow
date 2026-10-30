@@ -218,29 +218,7 @@ async function openTxn(id, done) {
   };
 }
 
-/* ---------- history ---------- */
-routes.transactions = async (main, [pre]) => {
-  const f = { q: '', category: '', account: '', status: '', type: '', from: '', to: '', min: '', max: '', sort: 'date_desc', page: 1, dup: '' };
-  if (!pre) { try { Object.assign(f, JSON.parse(sessionStorage.getItem('spendflow-history') || '{}')); } catch {} }
-  if (pre === 'duplicates') f.dup = 'suspected';
-  else if (pre === 'uncategorized') f.category = 'uncategorized';
-  else if (pre && pre.startsWith('cat-')) { const [, c, mo] = pre.split('-').concat([]); f.category = c === 'uncategorized' ? 'uncategorized' : c; if (mo) { const y = pre.split('-')[2], mm = pre.split('-')[3]; f.from = `${y}-${mm}-01`; f.to = `${y}-${mm}-31`; } }
-  let selected = new Set(), data = null, timer;
-  main.innerHTML = `<div class="head"><div><h1>${f.dup ? 'Possible duplicates' : 'Transactions'}</h1><p class="sub" id="sub"></p></div><div class="row"><a class="btn sm" href="/api/export.csv" download>Export CSV</a><button class="btn primary sm" id="imp">Import</button></div></div>
-    <div id="dupbox"></div><div class="row" style="margin-bottom:12px"><button class="btn sm" id="add-manual">+ Add transaction</button><a class="btn sm" href="#/calendar">Calendar</a><button class="btn sm" id="show-removed">Removed transactions</button></div>
-    <div class="card flat" style="margin-bottom:16px"><div class="grid g3" style="margin-bottom:10px"><input id="q" type="search" placeholder="Search merchant, note, amount…" aria-label="Search" value="${esc(f.q)}">
-      <select id="fcat" aria-label="Category"><option value="">All categories</option><option value="uncategorized">Needs a category</option>${S.cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
-      <select id="facc" aria-label="Account"><option value="">All accounts</option>${S.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div>
-      <details ${f.from ? 'open' : ''}><summary class="small muted" style="cursor:pointer">More filters</summary><div class="grid g3" style="margin-top:10px">
-        <select id="ftype" aria-label="Type"><option value="">Any type</option><option value="income">Income</option><option value="expense">Expense</option><option value="transfer">Transfer</option></select>
-        <select id="fsort" aria-label="Sort"><option value="date_desc">Newest first</option><option value="date_asc">Oldest first</option><option value="amount_desc">Largest first</option><option value="amount_asc">Smallest first</option></select>
-        <label class="check"><input type="checkbox" id="frec"> Recurring only</label>
-        <div><label for="ffrom">From</label><input type="date" id="ffrom" value="${esc(f.from.replace(/-31$/, '-01'))}"></div><div><label for="fto">To</label><input type="date" id="fto"></div>
-        <div class="row" style="flex-wrap:nowrap"><input id="fmin" inputmode="decimal" placeholder="Min ₹" aria-label="Minimum amount"><input id="fmax" inputmode="decimal" placeholder="Max ₹" aria-label="Maximum amount"></div></div></details></div>
-    <div id="selbar" aria-live="polite"></div><div id="list"></div>`;
-  $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
-  const accountEditor = (account=null) => {
-    const isCard = !account || account.type === 'card';
+function accountEditor(account=null) {
     const m=modal(`<h2>${account?'Edit account':'Add credit card'}</h2><div id="card-err"></div>
       <div class="field"><label>Name</label><input id="card-name" maxlength="60" value="${esc(account?.name || '')}" placeholder="SuperMoney Credit Card"></div>
       <div class="field"><label>Account type</label><select id="card-type">
@@ -268,8 +246,29 @@ routes.transactions = async (main, [pre]) => {
         m.close();await loadRef();route();
       }catch(e){$('#card-err',m.el).textContent=e.message;}
     };
-  };
-  $('#new-card-account').onclick=()=>accountEditor();
+}
+
+/* ---------- history ---------- */
+routes.transactions = async (main, [pre]) => {
+  const f = { q: '', category: '', account: '', status: '', type: '', from: '', to: '', min: '', max: '', sort: 'date_desc', page: 1, dup: '' };
+  if (!pre) { try { Object.assign(f, JSON.parse(sessionStorage.getItem('spendflow-history') || '{}')); } catch {} }
+  if (pre === 'duplicates') f.dup = 'suspected';
+  else if (pre === 'uncategorized') f.category = 'uncategorized';
+  else if (pre && pre.startsWith('cat-')) { const [, c, mo] = pre.split('-').concat([]); f.category = c === 'uncategorized' ? 'uncategorized' : c; if (mo) { const y = pre.split('-')[2], mm = pre.split('-')[3]; f.from = `${y}-${mm}-01`; f.to = `${y}-${mm}-31`; } }
+  let selected = new Set(), data = null, timer;
+  main.innerHTML = `<div class="head"><div><h1>${f.dup ? 'Possible duplicates' : 'Transactions'}</h1><p class="sub" id="sub"></p></div><div class="row"><a class="btn sm" href="/api/export.csv" download>Export CSV</a><button class="btn primary sm" id="imp">Import</button></div></div>
+    <div id="dupbox"></div><div class="row" style="margin-bottom:12px"><button class="btn sm" id="add-manual">+ Add transaction</button><a class="btn sm" href="#/calendar">Calendar</a><button class="btn sm" id="show-removed">Removed transactions</button></div>
+    <div class="card flat" style="margin-bottom:16px"><div class="grid g3" style="margin-bottom:10px"><input id="q" type="search" placeholder="Search merchant, note, amount…" aria-label="Search" value="${esc(f.q)}">
+      <select id="fcat" aria-label="Category"><option value="">All categories</option><option value="uncategorized">Needs a category</option>${S.cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+      <select id="facc" aria-label="Account"><option value="">All accounts</option>${S.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div>
+      <details ${f.from ? 'open' : ''}><summary class="small muted" style="cursor:pointer">More filters</summary><div class="grid g3" style="margin-top:10px">
+        <select id="ftype" aria-label="Type"><option value="">Any type</option><option value="income">Income</option><option value="expense">Expense</option><option value="transfer">Transfer</option></select>
+        <select id="fsort" aria-label="Sort"><option value="date_desc">Newest first</option><option value="date_asc">Oldest first</option><option value="amount_desc">Largest first</option><option value="amount_asc">Smallest first</option></select>
+        <label class="check"><input type="checkbox" id="frec"> Recurring only</label>
+        <div><label for="ffrom">From</label><input type="date" id="ffrom" value="${esc(f.from.replace(/-31$/, '-01'))}"></div><div><label for="fto">To</label><input type="date" id="fto"></div>
+        <div class="row" style="flex-wrap:nowrap"><input id="fmin" inputmode="decimal" placeholder="Min ₹" aria-label="Minimum amount"><input id="fmax" inputmode="decimal" placeholder="Max ₹" aria-label="Maximum amount"></div></div></details></div>
+    <div id="selbar" aria-live="polite"></div><div id="list"></div>`;
+  $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
   $('#imp').onclick = () => openImport();
   $('#add-manual').onclick = () => manualTransaction(todayIso(), load);
   $('#show-removed').onclick = () => { f.include_removed = f.include_removed ? '' : 1; $('#show-removed').textContent = f.include_removed ? 'Hide removed' : 'Removed transactions'; load(); };
@@ -391,6 +390,7 @@ routes.settings = async (main) => {
     <div class="card" style="margin-bottom:16px"><h2 style="margin-bottom:6px">Appearance</h2><div class="seg" id="theme"><button data-t="light">Light</button><button data-t="dark">Dark</button></div></div>
     <div class="card"><h2 style="margin-bottom:6px">Your data</h2><p class="muted small" style="margin-bottom:14px">Everything lives in this app's own database and upload folder. Nothing is shared.</p>
       <div class="row"><a class="btn" href="/api/export.csv" download>Export all as CSV</a><button class="btn danger" id="wipe">Delete all statements &amp; transactions</button><button class="btn danger" id="delacc">Delete my account</button></div></div>`;
+  $('#new-card-account').onclick = () => accountEditor();
   $('#imp').onclick = () => openImport();
   $$('[data-rule-cat]').forEach(el => { el.onchange = async () => { try { const rule = classificationRules.find(r=>r.id===+el.dataset.ruleCat); const newCat=cat(+el.value); await api('/classification-rules/'+rule.id,{method:'PATCH',body:{category_id:newCat.id,type:newCat.kind==='income'?'income':newCat.kind==='transfer'?'transfer':'expense'}}); toast('Rule updated'); } catch(e){fail(e);} }; });
   $('#change-password').onclick = () => {
@@ -531,8 +531,9 @@ routes.cards = async (main) => {
       <div class="bar" style="margin:10px 0"><i style="width:${Math.min(100,c.usage_percent||0)}%"></i></div>
       <h3 style="margin-top:16px">Possible card bill repayments</h3>
       <p class="small muted">Matches require a bank payment description, equal card credit and dates within 3 days. Confirm before classification.</p>
-      <div class="list">${c.repayment_suggestions.map(p=>`<div><div class="grow"><b>${money(p.amount_minor)}</b><div class="small muted">${esc(p.date)} · ${esc(p.description)}</div></div><button class="btn sm" data-repayment="${c.id}:${p.bank_txn_id}">Confirm transfer</button></div>`).join('')||'<p class="muted small">No unambiguous repayment matches found. You can still classify a bill payment as Transfer in History.</p>'}</div></section>`).join('')||'<div class="card">Add a Credit Card in Settings → Accounts to start tracking its monthly usage.</div>'}</div>`;
+      <div class="list">${c.repayment_suggestions.map(p=>`<div><div class="grow"><b>${money(p.amount_minor)}</b><div class="small muted">${esc(p.date)} · ${esc(p.description)}</div></div><button class="btn sm" data-repayment="${c.id}:${p.bank_txn_id}">Confirm transfer</button></div>`).join('')||'<p class="muted small">No unambiguous repayment matches found. You can still classify a bill payment as Transfer in History.</p>'}</div></section>`).join('')||'<div class="card"><p>Add a Credit Card to start tracking its monthly usage.</p><button class="btn primary" id="add-card-here">+ Add Credit Card</button></div>'}</div>`;
     $('#card-month').onchange=e=>draw(e.target.value);
+    const addCard=$('#add-card-here',main); if(addCard) addCard.onclick=()=>accountEditor();
     $$('[data-repayment]',main).forEach(el=>el.onclick=async()=>{
       const [cid,tid]=el.dataset.repayment.split(':');
       if(!await confirmBox({title:'Confirm credit card repayment?',body:'Both the bank payment and card credit will become Transfers, excluded from spending and income totals.',ok:'Confirm transfer'}))return;
