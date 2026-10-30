@@ -24,7 +24,7 @@ function brandLogo() {
 }
 const DESKTOP_TABS = [
   ['dashboard','Home'], ['review','Review'], ['transactions','History'],
-  ['groups','Linked Money'], ['people','People & Loans'], ['calendar','Calendar'],
+  ['groups','Linked Money'], ['cards','Credit Cards'], ['people','People & Loans'], ['calendar','Calendar'],
   ['tags','Tags & Trips'], ['plan','Plan'], ['settings','Settings']
 ];
 // Daily workflow stays visible; less frequent tools remain in More or contextual pages.
@@ -33,7 +33,7 @@ const MOBILE_TABS = [
 ];
 const MORE_GROUPS = [
   { title: 'Explore your money', tabs: [
-    ['calendar','Calendar'], ['people','People & Loans'], ['tags','Tags & Trips'], ['plan','Plan']
+    ['calendar','Calendar'], ['cards','Credit Cards'], ['people','People & Loans'], ['tags','Tags & Trips'], ['plan','Plan']
   ] },
   { title: 'Settings & data', tabs: [['settings','Settings']] }
 ];
