@@ -31,6 +31,13 @@ from .statement_parser import parse_file
 init_db()
 app = FastAPI(title="SpendFlow", docs_url=None, redoc_url=None, dependencies=[Depends(require_csrf)])
 
+@app.on_event("startup")
+def _recover_incomplete_imports():
+    # A restarted process cannot resume work from a terminated thread.
+    from .import_jobs import recover_interrupted_jobs
+    recover_interrupted_jobs()
+
+
 
 @app.exception_handler(RequestValidationError)
 async def _validation(_: Request, exc: RequestValidationError):
@@ -294,6 +301,9 @@ class AccountIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     type: str = "bank"
     last4: str | None = Field(default=None, max_length=4)
+    card_monthly_limit_minor: int | None = Field(default=None, ge=0, le=10**13)
+    card_credit_limit_minor: int | None = Field(default=None, ge=0, le=10**13)
+    card_opening_outstanding_minor: int | None = Field(default=None, ge=0, le=10**13)
 
 
 def _own_account(db, uid: int, account_id: int):
@@ -314,17 +324,26 @@ def list_accounts(user=Depends(current_user), db=Depends(get_db)):
 @app.post("/api/accounts")
 def create_account(a: AccountIn, user=Depends(current_user), db=Depends(get_db)):
     t = a.type if a.type in ("bank", "upi", "card", "cash") else "bank"
-    cur = db.execute("INSERT INTO accounts(user_id,name,type,last4) VALUES(?,?,?,?)",
-                     (user["id"], a.name.strip(), t, (a.last4 or None)))
+    cur = db.execute(
+        "INSERT INTO accounts(user_id,name,type,last4,card_monthly_limit_minor,card_credit_limit_minor,card_opening_outstanding_minor) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (user["id"], a.name.strip(), t, a.last4 or None,
+         (a.card_monthly_limit_minor or 0) if t=="card" else 0,
+         (a.card_credit_limit_minor or 0) if t=="card" else 0,
+         (a.card_opening_outstanding_minor or 0) if t=="card" else 0))
     db.commit()
     return dict(_own_account(db, user["id"], cur.lastrowid))
 
 
 @app.patch("/api/accounts/{account_id}")
 def update_account(account_id: int, a: AccountIn, user=Depends(current_user), db=Depends(get_db)):
-    _own_account(db, user["id"], account_id)
+    old_account = _own_account(db, user["id"], account_id)
     t = a.type if a.type in ("bank", "upi", "card", "cash") else "bank"
-    db.execute("UPDATE accounts SET name=?, type=?, last4=? WHERE id=?", (a.name.strip(), t, a.last4 or None, account_id))
+    monthly_limit = (a.card_monthly_limit_minor if a.card_monthly_limit_minor is not None else old_account["card_monthly_limit_minor"]) if t=="card" else 0
+    credit_limit = (a.card_credit_limit_minor if a.card_credit_limit_minor is not None else old_account["card_credit_limit_minor"]) if t=="card" else 0
+    opening = (a.card_opening_outstanding_minor if a.card_opening_outstanding_minor is not None else old_account["card_opening_outstanding_minor"]) if t=="card" else 0
+    db.execute("UPDATE accounts SET name=?, type=?, last4=?, card_monthly_limit_minor=?,card_credit_limit_minor=?,card_opening_outstanding_minor=? WHERE id=?",
+               (a.name.strip(), t, a.last4 or None, monthly_limit, credit_limit, opening, account_id))
     db.commit()
     return dict(_own_account(db, user["id"], account_id))
 
@@ -410,23 +429,81 @@ def delete_category(cid: int, user=Depends(current_user), db=Depends(get_db)):
     return {"ok": True}
 
 
+# ================================================================ credit cards
+
+@app.get("/api/credit-cards")
+def credit_card_overview(month: str | None = None, user=Depends(current_user), db=Depends(get_db)):
+    from . import credit_cards
+    return credit_cards.overview(db, user["id"], month)
+
+
+@app.post("/api/credit-cards/{card_id}/repayments/{bank_txn_id}/confirm")
+def confirm_card_repayment(card_id: int, bank_txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    from . import credit_cards
+    result = credit_cards.confirm_repayment(db, user["id"], card_id, bank_txn_id)
+    db.commit()
+    return result
+
+
 # ================================================================ importing
 
 def _resolve_account(db, uid, account_id, new_name, new_type, res, cache: dict) -> int:
     if account_id:
-        return _own_account(db, uid, account_id)["id"]
+        chosen = _own_account(db, uid, account_id)
+        if res.source_type == "card" and chosen["type"] != "card":
+            raise ValueError("Credit-card statements must be imported into a credit-card account.")
+        return chosen["id"]
     if new_name:
         if "new" not in cache:
-            t = new_type if new_type in ("bank", "upi", "card", "cash") else "bank"
+            t = "card" if res.source_type == "card" else (new_type if new_type in ("bank", "upi", "card", "cash") else "bank")
             cache["new"] = db.execute("INSERT INTO accounts(user_id,name,type) VALUES(?,?,?)", (uid, new_name.strip()[:60], t)).lastrowid
         return cache["new"]
     name = res.account_name or ("Google Pay" if res.source_type == "gpay" else "Bank account")
-    row = db.execute("SELECT id FROM accounts WHERE user_id=? AND name=? AND (last4 IS NULL OR ?='' OR last4=?)",
+    if res.source_type == "card" and not res.account_last4:
+        raise ValueError("Card number was not detected; choose an existing card account.")
+    if res.source_type == "card":
+        matches = db.execute("SELECT id FROM accounts WHERE user_id=? AND type='card' AND last4=?", (uid, res.account_last4)).fetchall()
+        if len(matches) > 1:
+            raise ValueError("Multiple cards share these last four digits; choose the correct card.")
+        row = matches[0] if matches else None
+    else:
+        row = db.execute("SELECT id FROM accounts WHERE user_id=? AND type!='card' AND name=? AND (last4 IS NULL OR ?='' OR last4=?)",
                      (uid, name, res.account_last4 or "", res.account_last4 or "")).fetchone()
     if row:
         return row["id"]
+    if res.source_type == "card":
+        info = res.card_info
+        return db.execute("INSERT INTO accounts(user_id,name,type,last4,card_credit_limit_minor) VALUES(?,?,?,?,?)",
+                          (uid,name,"card",res.account_last4,info.get("limit_minor") or 0)).lastrowid
     return db.execute("INSERT INTO accounts(user_id,name,type,last4) VALUES(?,?,?,?)",
                       (uid, name, "upi" if res.source_type == "gpay" else "bank", res.account_last4)).lastrowid
+
+
+@app.post("/api/imports/jobs", status_code=202)
+def start_import_job(files: list[UploadFile] = File(...), account_id: int | None = Form(None),
+                     new_account_name: str | None = Form(None), new_account_type: str = Form("bank"),
+                     pdf_password: str | None = Form(None), use_ai: bool = Form(False),
+                     user=Depends(current_user)):
+    """Return immediately; parsing and staging run outside the HTTP request."""
+    from . import import_jobs
+    if not files or len(files) > MAX_FILES_PER_IMPORT:
+        raise HTTPException(400, "Choose 1 to 10 files.")
+    uploads = []
+    for f in files:
+        data = f.file.read(MAX_UPLOAD_BYTES + 1)
+        uploads.append((Path(f.filename or "statement").name[:120], data))
+    job_id = import_jobs.enqueue(user["id"], uploads, account_id,
+                                 new_account_name, new_account_type, pdf_password, use_ai)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/api/imports/jobs/{job_id}")
+def import_job_status(job_id: str, user=Depends(current_user), db=Depends(get_db)):
+    row = db.execute("SELECT status,result FROM import_jobs WHERE id=? AND user_id=?",
+                     (job_id, user["id"])).fetchone()
+    if not row:
+        raise LookupError("Import job not found.")
+    return {"status": row["status"], **json.loads(row["result"] or "{}")}
 
 
 @app.post("/api/imports")
@@ -518,6 +595,30 @@ def _own_statement(db, uid: int, sid: int):
     return r
 
 
+class CardImportAccount(BaseModel):
+    account_id: int
+
+@app.patch("/api/imports/{sid}/card-account")
+def set_import_card_account(sid: int, body: CardImportAccount, user=Depends(current_user), db=Depends(get_db)):
+    """Move a staged card statement to an existing credit-card account before import."""
+    st = _own_statement(db, user["id"], sid)
+    if st["status"] != "preview" or st["source_type"] != "card":
+        raise HTTPException(400, "Only pending credit-card imports can change accounts.")
+    dest = _own_account(db,user["id"],body.account_id)
+    if dest["type"] != "card":
+        raise HTTPException(400, "Choose a credit-card account.")
+    meta = json.loads(st["card_meta"] or "{}")
+    if meta.get("last4") and dest["last4"] and meta["last4"] != dest["last4"]:
+        raise HTTPException(400, "Card number does not match the statement.")
+    db.execute("UPDATE statements SET account_id=? WHERE id=? AND user_id=?", (dest["id"],sid,user["id"]))
+    db.execute("UPDATE transactions SET account_id=? WHERE statement_id=? AND user_id=? AND status='staged'",
+               (dest["id"],sid,user["id"]))
+    from .importing import mark_duplicates
+    mark_duplicates(db,user["id"],sid)
+    db.commit()
+    return {"ok":True,"account_id":dest["id"]}
+
+
 @app.get("/api/imports/{sid}")
 def import_preview(sid: int, user=Depends(current_user), db=Depends(get_db)):
     st = _own_statement(db, user["id"], sid)
@@ -532,7 +633,7 @@ def import_preview(sid: int, user=Depends(current_user), db=Depends(get_db)):
         rows.append(d)
     return {
         "statement": {**{k: st[k] for k in ("id", "filename", "source_type", "parser", "status", "account_id", "account_name")},
-                      "warnings": json.loads(st["warnings"])},
+                      "warnings": json.loads(st["warnings"]), "card_meta": json.loads(st["card_meta"] or "{}") },
         "rows": rows,
         "summary": {
             "count": len(rows),
@@ -623,6 +724,12 @@ def add_staged(sid: int, n: StagedNew, user=Depends(current_user), db=Depends(ge
     importing.refresh_statement_meta(db, sid)
     db.commit()
     return {"id": tid}
+
+
+@app.post("/api/imports/{sid}/commit-job", status_code=202)
+def queue_statement_commit(sid: int, user=Depends(current_user)):
+    from . import import_jobs
+    return {"job_id": import_jobs.enqueue_commit(user["id"], sid), "status": "queued"}
 
 
 @app.post("/api/imports/{sid}/commit")
@@ -820,6 +927,34 @@ def _review_state(db, uid: int, scope: str, order: str = 'desc') -> dict:
 @app.get("/api/review/next")
 def review_next(scope: str = "pending", order: str = "desc", user=Depends(current_user), db=Depends(get_db)):
     return _review_state(db, user["id"], "skipped" if scope == "skipped" else "pending", order)
+
+
+class PayeeNameEdit(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    remember: bool = False
+
+
+@app.patch("/api/review/{txn_id}/payee-name")
+def review_payee_name(txn_id: int, b: PayeeNameEdit, user=Depends(current_user), db=Depends(get_db)):
+    from . import payee_names
+    uid = user["id"]
+    name = b.name.strip()
+    if not name:
+        raise HTTPException(400, "Enter a name.")
+    row = db.execute("SELECT id,description,status FROM transactions WHERE id=? AND user_id=? "
+                     "AND status IN ('pending','skipped') AND removed_at IS NULL",
+                     (txn_id, uid)).fetchone()
+    if not row:
+        raise LookupError("Transaction is not waiting for review.")
+    info = payee_names.identity_details(row["description"])
+    if b.remember and not info:
+        raise HTTPException(400, "No reliable UPI or bank payee reference to remember. Save this name for this transaction only.")
+    db.execute("UPDATE transactions SET merchant=?,merchant_key=? WHERE id=? AND user_id=?",
+               (name, merchant_key(name), txn_id, uid))
+    if b.remember:
+        payee_names.learn(db, uid, info["identity"], name)
+    db.commit()
+    return {"merchant": name, "remembered": b.remember}
 
 
 @app.post("/api/review/{txn_id}/categorize")
