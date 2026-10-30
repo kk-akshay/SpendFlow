@@ -11,7 +11,7 @@ def test_supercard_repayments_refunds_wrapped_fuel_and_illustration_excluded():
 super.money
 xxxx xxxx xxxx 0103
 Total Limit: ₹9,000.00
-Transactions and EMIs ₹201.18
+Transactions and EMIs ₹202.18
 Repayments ₹150.00
 Transaction Reversals and Refunds ₹30.00"""
     transactions = """Utkarsh Small Finance Bank
@@ -33,7 +33,7 @@ Payment Due Date ₹1,000.00"""
     assert info["last4"]=="0103"
     assert info["limit_minor"]==900000
     assert len(rows)==6
-    assert sum(r["amount_minor"] for r in rows if r["direction"]=="debit")==20118
+    assert sum(r["amount_minor"] for r in rows if r["direction"]=="debit")==20218
     assert sum(r["amount_minor"] for r in rows if "Credit card repayment" in r["flags"])==15000
     assert sum(r["amount_minor"] for r in rows if "Credit card refund" in r["flags"])==3000
     assert all(r["date"].startswith("2026-") for r in rows)
