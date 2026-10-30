@@ -239,6 +239,32 @@ routes.transactions = async (main, [pre]) => {
         <div class="row" style="flex-wrap:nowrap"><input id="fmin" inputmode="decimal" placeholder="Min ₹" aria-label="Minimum amount"><input id="fmax" inputmode="decimal" placeholder="Max ₹" aria-label="Maximum amount"></div></div></details></div>
     <div id="selbar" aria-live="polite"></div><div id="list"></div>`;
   $('#fcat').value = f.category; if (f.to) { const [y, mo] = f.to.split('-'); $('#fto').value = new Date(+y, +mo, 0).toISOString().slice(0, 10).replace(/-\d\d$/, '-' + String(new Date(+y, +mo, 0).getDate()).padStart(2, '0')); f.to = $('#fto').value; }
+  const accountEditor = (account=null) => {
+    const isCard = !account || account.type === 'card';
+    const m=modal(`<h2>${account?'Edit account':'Add credit card'}</h2><div id="card-err"></div>
+      <div class="field"><label>Name</label><input id="card-name" maxlength="60" value="${esc(account?.name || '')}" placeholder="SuperMoney Credit Card"></div>
+      <div class="field"><label>Account type</label><select id="card-type">
+        ${[['card','Credit Card'],['bank','Bank'],['upi','UPI'],['cash','Cash']].map(([v,n])=>`<option value="${v}" ${(account?.type || 'card')===v?'selected':''}>${n}</option>`).join('')}</select></div>
+      <div class="field"><label>Last 4 digits (optional)</label><input id="card-last4" maxlength="4" inputmode="numeric" value="${esc(account?.last4||'')}"></div>
+      <div class="field" id="card-limit-field"><label>Monthly card spending limit (₹)</label>
+      <input id="card-limit" inputmode="decimal" value="${account?.card_monthly_limit_minor ? (account.card_monthly_limit_minor/100).toFixed(2) : ''}" placeholder="e.g. 20000">
+      <div class="small muted">A monthly budget for purchases, not the bank's credit limit.</div></div>
+      <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="card-save">Save account</button></div>`);
+    $('[data-x]',m.el).onclick=()=>m.close();
+    const setType=()=>$('#card-limit-field',m.el).hidden=$('#card-type',m.el).value!=='card';
+    $('#card-type',m.el).onchange=setType;setType();
+    $('#card-save',m.el).onclick=async()=>{
+      try{
+        const body={name:$('#card-name',m.el).value.trim(),type:$('#card-type',m.el).value,
+          last4:$('#card-last4',m.el).value.trim()||null,
+          card_monthly_limit_minor:$('#card-type',m.el).value==='card'?toMinor($('#card-limit',m.el).value||'0'):0};
+        if(!body.name)throw new Error('Enter an account name.');
+        await api(account?'/accounts/'+account.id:'/accounts',{method:account?'PATCH':'POST',body});
+        m.close();await loadRef();route();
+      }catch(e){$('#card-err',m.el).textContent=e.message;}
+    };
+  };
+  $('#new-card-account').onclick=()=>accountEditor();
   $('#imp').onclick = () => openImport();
   $('#add-manual').onclick = () => manualTransaction(todayIso(), load);
   $('#show-removed').onclick = () => { f.include_removed = f.include_removed ? '' : 1; $('#show-removed').textContent = f.include_removed ? 'Hide removed' : 'Removed transactions'; load(); };
@@ -348,7 +374,7 @@ routes.settings = async (main) => {
       ${sts.length ? `<div class="list">${sts.map((s) => `<div><div class="grow"><b class="ell">${esc(s.filename)}</b><div class="small muted">${esc(s.account_name)} · ${s.date_from ? fdate(s.date_from) + ' to ' + fdate(s.date_to) : ''} · ${s.txn_count} transactions${s.status === 'preview' ? ' · <span class="neg">not confirmed</span>' : ''}</div></div>
         ${s.status === 'preview' ? `<a class="btn sm" href="#/import/${s.id}">Review</a>` : `<a class="btn sm ghost" href="/api/statements/${s.id}/file" target="_blank" rel="noopener">View file</a>`}<button class="btn sm ghost danger" data-sdel="${s.id}">Delete</button></div>`).join('')}</div>` : '<p class="muted small">No statements uploaded yet.</p>'}</div>
     <div class="grid g2" style="margin-bottom:16px">
-      <div class="card"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Accounts</h2></div><div class="list">${accs.map((a) => `<div><div class="grow"><b>${esc(a.name)}</b><div class="small muted">${esc(a.type)}${a.last4 ? ' ••' + esc(a.last4) : ''} · ${a.txn_count} transactions</div></div><button class="btn sm ghost" data-aren="${a.id}" data-n="${esc(a.name)}">Rename</button><button class="btn sm ghost danger" data-adel="${a.id}" data-n="${esc(a.name)}">Delete</button></div>`).join('') || '<p class="muted small">Accounts appear when you import a statement.</p>'}</div></div>
+      <div class="card"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Accounts</h2><button class="btn sm" id="new-card-account">+ Credit Card</button></div><div class="list">${accs.map((a) => `<div><div class="grow"><b>${esc(a.name)}</b><div class="small muted">${esc(a.type)}${a.last4 ? ' ••' + esc(a.last4) : ''} · ${a.txn_count} transactions${a.type==='card' ? ` · Monthly limit: ${a.card_monthly_limit_minor ? money(a.card_monthly_limit_minor) : 'Not set'}` : ''}</div></div><button class="btn sm ghost" data-aren="${a.id}" data-n="${esc(a.name)}">Edit</button><button class="btn sm ghost danger" data-adel="${a.id}" data-n="${esc(a.name)}">Delete</button></div>`).join('') || '<p class="muted small">Accounts appear when you import a statement.</p>'}</div></div>
       <div class="card"><div class="row" style="justify-content:space-between;margin-bottom:6px"><h2>Categories</h2><button class="btn sm" id="addc">+ New</button></div><div class="list">${cats.map((c) => `<div>${catDot(c)}<span class="grow">${esc(c.name)}</span><span class="small muted">${c.uses}</span>${c.builtin ? '' : `<button class="btn sm ghost danger" data-cdel="${c.id}" data-n="${esc(c.name)}" data-u="${c.uses}">Delete</button>`}</div>`).join('')}</div></div></div>
     <div class="card" style="margin-bottom:16px"><h2>Remembered classifications</h2><p class="muted small">Exact merchant and direction matches only. Existing corrections are never reclassified.</p>
       <div class="list">${classificationRules.map(r=>`<div><span class="grow"><b>${esc(r.merchant_key)}</b><div class="small muted">${esc(r.direction)}</div></span><select data-rule-cat="${r.id}" style="width:auto">${cats.map(x=>`<option value="${x.id}" ${x.id===r.category_id?'selected':''}>${esc(x.name)}</option>`).join('')}</select><button class="btn sm danger" data-rule-del="${r.id}">Remove</button></div>`).join('')||'<p class="muted small">No saved classifications.</p>'}</div></div>
@@ -400,7 +426,7 @@ routes.settings = async (main) => {
         $('#k', m.el).onclick = async () => { await api(`/statements/${sd.dataset.sdel}`, { method: 'DELETE' }); m.close(); toast('File deleted'); route(); };
         $('#a', m.el).onclick = async () => { await api(`/statements/${sd.dataset.sdel}?transactions=true`, { method: 'DELETE' }); m.close(); toast('File and transactions deleted'); refreshBadge(); route(); };
       } else if (ad) { if (await confirmBox({ title: `Delete “${ad.dataset.n}”?`, body: 'This also deletes its statements and transactions. This can’t be undone.', ok: 'Delete account', danger: true })) { await api('/accounts/' + ad.dataset.adel, { method: 'DELETE' }); refreshBadge(); route(); } }
-      else if (ar) { const m = modal(`<h2>Rename account</h2><div class="field"><input id="rn" value="${esc(ar.dataset.n)}" maxlength="60" aria-label="Name"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="rg">Save</button></div>`); $('[data-x]', m.el).onclick = () => m.close(); $('#rg', m.el).onclick = async () => { const a = accs.find((x) => x.id == ar.dataset.aren); await api('/accounts/' + a.id, { method: 'PATCH', body: { name: $('#rn', m.el).value, type: a.type, last4: a.last4 } }); m.close(); route(); }; }
+      else if (ar) { accountEditor(accs.find(a=>a.id===+ar.dataset.aren)); }
       else if (cd) { if (await confirmBox({ title: `Delete “${cd.dataset.n}”?`, body: +cd.dataset.u ? `${cd.dataset.u} transaction(s) in this category go back to your review queue.` : 'Nothing is using it.', ok: 'Delete', danger: true })) { await api('/categories/' + cd.dataset.cdel, { method: 'DELETE' }); await loadRef(); refreshBadge(); route(); } }
     } catch (er) { fail(er); }
   };
@@ -479,4 +505,27 @@ routes.tags = async (main) => {
       $('[data-x]',m.el).onclick=()=>m.close();
     }catch(e){fail(e);}
   });
+};
+
+/* ---------- credit card usage and repayment suggestions ---------- */
+routes.cards = async (main) => {
+  const current=new Date().toISOString().slice(0,7);
+  const draw=async(month=current)=>{
+    const data=await api('/credit-cards?month='+encodeURIComponent(month));
+    main.innerHTML=`<div class="head"><div><h1>Credit Cards</h1><p class="sub">Monthly spending and possible repayments</p></div><input type="month" id="card-month" value="${esc(month)}" aria-label="Card spending month"></div>
+      <div class="grid g2">${data.cards.map(c=>`<section class="card"><h2>${esc(c.name)} ${c.last4?'••'+esc(c.last4):''}</h2>
+      <div class="small muted" style="margin:12px 0 5px">Spent this month</div><div class="value">${money(c.spent_minor)}</div>
+      <p class="muted small">Monthly budget: ${c.monthly_limit_minor?money(c.monthly_limit_minor):'Not set'}${c.usage_percent!==null?' · '+c.usage_percent+'% used':''}</p>
+      <div class="bar" style="margin:10px 0"><i style="width:${Math.min(100,c.usage_percent||0)}%"></i></div>
+      <h3 style="margin-top:16px">Possible card bill repayments</h3>
+      <p class="small muted">Matches require a bank payment description, equal card credit and dates within 3 days. Confirm before classification.</p>
+      <div class="list">${c.repayment_suggestions.map(p=>`<div><div class="grow"><b>${money(p.amount_minor)}</b><div class="small muted">${esc(p.date)} · ${esc(p.description)}</div></div><button class="btn sm" data-repayment="${c.id}:${p.bank_txn_id}">Confirm transfer</button></div>`).join('')||'<p class="muted small">No unambiguous repayment matches found. You can still classify a bill payment as Transfer in History.</p>'}</div></section>`).join('')||'<div class="card">Add a Credit Card in Settings → Accounts to start tracking its monthly usage.</div>'}</div>`;
+    $('#card-month').onchange=e=>draw(e.target.value);
+    $$('[data-repayment]',main).forEach(el=>el.onclick=async()=>{
+      const [cid,tid]=el.dataset.repayment.split(':');
+      if(!await confirmBox({title:'Confirm credit card repayment?',body:'Both the bank payment and card credit will become Transfers, excluded from spending and income totals.',ok:'Confirm transfer'}))return;
+      try {await api('/credit-cards/'+cid+'/repayments/'+tid+'/confirm',{method:'POST'});toast('Repayment linked');draw(month);}catch(e){fail(e);}
+    });
+  };
+  await draw();
 };

@@ -301,6 +301,7 @@ class AccountIn(BaseModel):
     name: str = Field(min_length=1, max_length=60)
     type: str = "bank"
     last4: str | None = Field(default=None, max_length=4)
+    card_monthly_limit_minor: int | None = Field(default=None, ge=0, le=10**13)
 
 
 def _own_account(db, uid: int, account_id: int):
@@ -321,17 +322,18 @@ def list_accounts(user=Depends(current_user), db=Depends(get_db)):
 @app.post("/api/accounts")
 def create_account(a: AccountIn, user=Depends(current_user), db=Depends(get_db)):
     t = a.type if a.type in ("bank", "upi", "card", "cash") else "bank"
-    cur = db.execute("INSERT INTO accounts(user_id,name,type,last4) VALUES(?,?,?,?)",
-                     (user["id"], a.name.strip(), t, (a.last4 or None)))
+    cur = db.execute("INSERT INTO accounts(user_id,name,type,last4,card_monthly_limit_minor) VALUES(?,?,?,?,?)",
+                     (user["id"], a.name.strip(), t, (a.last4 or None), a.card_monthly_limit_minor if t=="card" and a.card_monthly_limit_minor is not None else 0))
     db.commit()
     return dict(_own_account(db, user["id"], cur.lastrowid))
 
 
 @app.patch("/api/accounts/{account_id}")
 def update_account(account_id: int, a: AccountIn, user=Depends(current_user), db=Depends(get_db)):
-    _own_account(db, user["id"], account_id)
+    old_account = _own_account(db, user["id"], account_id)
     t = a.type if a.type in ("bank", "upi", "card", "cash") else "bank"
-    db.execute("UPDATE accounts SET name=?, type=?, last4=? WHERE id=?", (a.name.strip(), t, a.last4 or None, account_id))
+    monthly_limit = (a.card_monthly_limit_minor if a.card_monthly_limit_minor is not None else old_account["card_monthly_limit_minor"]) if t=="card" else 0
+    db.execute("UPDATE accounts SET name=?, type=?, last4=?, card_monthly_limit_minor=? WHERE id=?", (a.name.strip(), t, a.last4 or None, monthly_limit, account_id))
     db.commit()
     return dict(_own_account(db, user["id"], account_id))
 
@@ -415,6 +417,22 @@ def delete_category(cid: int, user=Depends(current_user), db=Depends(get_db)):
     db.execute("DELETE FROM categories WHERE id=?", (cid,))
     db.commit()
     return {"ok": True}
+
+
+# ================================================================ credit cards
+
+@app.get("/api/credit-cards")
+def credit_card_overview(month: str | None = None, user=Depends(current_user), db=Depends(get_db)):
+    from . import credit_cards
+    return credit_cards.overview(db, user["id"], month)
+
+
+@app.post("/api/credit-cards/{card_id}/repayments/{bank_txn_id}/confirm")
+def confirm_card_repayment(card_id: int, bank_txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    from . import credit_cards
+    result = credit_cards.confirm_repayment(db, user["id"], card_id, bank_txn_id)
+    db.commit()
+    return result
 
 
 # ================================================================ importing
