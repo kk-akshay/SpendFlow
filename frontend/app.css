@@ -344,3 +344,9 @@ input[type="checkbox"],input[type="radio"]{accent-color:var(--accent)}
   .history-txn-merchant{font-size:13px}
   .history-txn-amount{font-size:12.5px}
 }
+
+/* Navigation: review is now a primary action, with a compact review count. */
+.mobile-nav .item{position:relative}
+.mobile-nav .badge{position:absolute;top:1px;right:clamp(5px,15%,22px);min-width:17px;max-width:38px;padding:1px 4px;border-radius:11px;background:var(--accent);color:var(--accent-ink);font-size:9px;font-weight:750;line-height:1.4;overflow:hidden;text-overflow:ellipsis}
+.more-group+.more-group{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}
+.more-section-title{font-size:11px;font-weight:700;letter-spacing:.045em;text-transform:uppercase;color:var(--muted);padding:4px 12px 6px;margin:0}
