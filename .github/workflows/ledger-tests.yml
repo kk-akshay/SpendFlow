@@ -18,6 +18,8 @@ jobs:
           python-version: "3.13"
       - run: pip install -r requirements.txt httpx
       - run: python tests/ledger_test.py
+      - run: python tests/refunds_test.py
+      - run: python tests/mobile_keyboard_test.py
       - run: python tests/spendflow_test.py
       - run: python tests/people_loans_test.py
       - run: python tests/password_recovery_test.py
