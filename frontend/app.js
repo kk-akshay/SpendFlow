@@ -66,7 +66,7 @@ function monthSelector(ym, onChange, { label = 'Select month' } = {}) {
   draw();return container;
 }
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
-const typeLabel = { income: 'Income', expense: 'Expense', transfer: 'Transfer' };
+const typeLabel = { income: 'Income', expense: 'Expense', transfer: 'Transfer', refund: 'Refund / Reversal' };
 const cat = (id) => S.cats.find((c) => c.id === id);
 const catDot = (c) => `<span class="dot" style="background:var(--shade-3)"></span>`;
 
@@ -82,6 +82,29 @@ function toast(msg, { err = false, action, onAction, ms = 5000 } = {}) {
   setTimeout(() => el.remove(), err ? 7000 : Math.min(ms, 4000));
 }
 const fail = (e) => toast(e.message || String(e), { err: true });
+
+// One shared listener pair keeps active mobile fields inside the visual viewport.
+function installMobileKeyboardSupport() {
+  if (!window.visualViewport) return;
+  const viewport = window.visualViewport;
+  const adjust = () => {
+    document.documentElement.style.setProperty('--keyboard-viewport-height', viewport.height + 'px');
+    document.documentElement.style.setProperty('--keyboard-viewport-offset', viewport.offsetTop + 'px');
+    const active = document.activeElement;
+    if (active?.matches?.('input,textarea,select,[contenteditable="true"]')) {
+      requestAnimationFrame(() => active.scrollIntoView({block:'nearest'}));
+    }
+  };
+  viewport.addEventListener('resize', adjust);
+  viewport.addEventListener('scroll', adjust);
+  document.addEventListener('focusin', (e) => {
+    if (e.target.matches?.('input,textarea,select,[contenteditable="true"]')) {
+      requestAnimationFrame(() => e.target.scrollIntoView({block:'nearest'}));
+    }
+  });
+  adjust();
+}
+if (window.matchMedia('(pointer:coarse)').matches) installMobileKeyboardSupport();
 
 function modal(html, { onClose } = {}) {
   const prev = document.activeElement;
