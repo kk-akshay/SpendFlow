@@ -94,7 +94,7 @@ routes.dashboard = async (main, [month]) => {
 function txnRow(t) {
   const inflow = t.direction === 'credit';
   const category = t.is_split ? 'Split' : (t.category_name || (t.status === 'skipped' ? 'Skipped' : 'Needs a category'));
-  const details = (t.type === 'transfer' ? ' · Transfer' : '') + (t.recurring ? ' · ↻' : '');
+  const details = (t.is_refund ? ' · Refund' : t.type === 'transfer' ? ' · Transfer' : '') + (t.recurring ? ' · ↻' : '');
   const merchant = t.merchant || (t.description || '').slice(0, 60) || 'Unknown';
   return `<div class="txn history-txn" data-txn="${t.id}" tabindex="0" role="button" aria-label="Open ${esc(merchant)} transaction">
     <span class="dot history-txn-dot" aria-hidden="true"></span>
@@ -111,20 +111,63 @@ function budgetBars(b, compact) {
   return `<div class="list">${rows.slice(0, compact ? 5 : 99).map((r) => `<div style="display:block"><div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="row" style="gap:8px"><span class="dot" style="background:var(--shade-3)"></span><b>${esc(r.category_name)}</b></span><span class="small ${r.pct >= 100 ? 'neg' : 'muted'}">${money(r.spent_minor)} of ${money(r.limit_minor)}</span></div><div class="bar ${r.pct >= 100 ? 'bad' : r.pct >= 80 ? 'warn' : ''}"><i style="width:${Math.min(r.pct, 100)}%"></i></div></div>`).join('')}</div>`;
 }
 
+
+async function openRefundLink(id) {
+  return new Promise(resolve => {
+    const dlg=modal('<h2>Link refund to purchase?</h2><p class="small muted">Link to the original purchase, or skip and keep this refund categorized on its own date.</p>'
+      +'<div class="grid g2"><div class="field"><label>Merchant / description</label><input id="rq" placeholder="Search purchases"></div>'
+      +'<div class="field"><label>Original amount</label><input id="ra" inputmode="decimal" placeholder="Any amount"></div>'
+      +'<div class="field"><label>From</label><input id="rf" type="date"></div><div class="field"><label>To</label><input id="rt" type="date"></div></div>'
+      +'<div class="row" style="justify-content:flex-end"><button class="btn sm" id="rsearch">Search</button></div><div class="small" id="rerror" role="alert"></div>'
+      +'<div class="list" id="rmatches" style="max-height:38vh;overflow-y:auto"></div>'
+      +'<div class="foot"><button class="btn" id="rskip">Skip linking</button><button class="btn danger" id="runlink" hidden>Unlink existing</button></div>',
+      {onClose:resolve});
+    const load=async()=>{
+      const params=new URLSearchParams();
+      if($('#rq',dlg.el).value.trim())params.set('q',$('#rq',dlg.el).value.trim());
+      const amount=$('#ra',dlg.el).value.trim();
+      if(amount){const n=toMinor(amount);if(!n||n<0){$('#rerror',dlg.el).textContent='Enter a valid amount';return;}params.set('amount_minor',n);}
+      if($('#rf',dlg.el).value)params.set('from_date',$('#rf',dlg.el).value);
+      if($('#rt',dlg.el).value)params.set('to_date',$('#rt',dlg.el).value);
+      $('#rmatches',dlg.el).textContent='Searching…';
+      try {
+        const results=await api('/transactions/'+id+'/refund-candidates?'+params.toString());
+        $('#rerror',dlg.el).textContent='';
+        $('#rmatches',dlg.el).innerHTML=results.map(t=>'<div class="row" style="flex-wrap:nowrap;padding:8px 0"><div class="grow"><b>'+esc(t.merchant||t.description)+'</b><div class="small muted">'+fdate(t.date)+' · Original '+money(t.amount_minor)+' · Remaining '+money(t.remaining_minor)+'</div><div class="small muted">'+esc(t.reason)+'</div></div><button class="btn sm primary" data-link-refund="'+t.id+'">Link</button></div>').join('')||'<p class="small muted">No eligible expenses found. Change search filters or skip.</p>';
+        $('[data-link-refund]',dlg.el).forEach(btn=>btn.onclick=async()=>{
+          btn.disabled=true;
+          try{await api('/transactions/'+id+'/refund-link',{method:'POST',body:{original_id:+btn.dataset.linkRefund}});dlg.close();toast('Refund linked');route();}
+          catch(e){btn.disabled=false;$('#rerror',dlg.el).textContent=e.message;}
+        });
+      }catch(e){$('#rerror',dlg.el).textContent=e.message;}
+    };
+    $('#rsearch',dlg.el).onclick=load;
+    $('#rskip',dlg.el).onclick=()=>dlg.close();
+    $('#runlink',dlg.el).onclick=async()=>{
+      try{await api('/transactions/'+id+'/refund-link',{method:'DELETE'});dlg.close();toast('Refund unlinked');route();}
+      catch(e){$('#rerror',dlg.el).textContent=e.message;}
+    };
+    api('/transactions/'+id).then(r=>{if(r.txn.refund_of_id)$('#runlink',dlg.el).hidden=false;}).catch(()=>{});
+    load();
+  });
+}
+
 /* ---------- transaction editor (used from dashboard + history) ---------- */
 async function openTxn(id, done) {
   let d;
   try { d = await api('/transactions/' + id); } catch (e) { return fail(e); }
-  const t = d.txn; let catId = t.category_id, recurring = t.recurring, type = t.type, changed = false;
+  const t = d.txn; let catId = t.category_id, recurring = t.recurring, type = t.is_refund ? 'refund' : t.type, changed = false;
   let allTags = [], currentTags = [];
   try { [allTags, currentTags] = await Promise.all([api('/tags'),api('/transactions/'+id+'/tags')]); } catch (e) { console.warn('Tags unavailable', e); }
   const m = modal(`<div class="row" style="justify-content:space-between;align-items:flex-start"><div><h2 style="margin:0">${esc(t.merchant || 'Transaction')}</h2><p class="muted small">${fdate(t.date)} · ${esc(t.account_name)}</p></div><b class="num" style="font-size:22px">${t.direction === 'credit' ? '+' : ''}${money(t.amount_minor)}</b></div>
     <div class="desc small muted" style="margin:14px 0;padding:10px 12px;background:var(--surface2);border-radius:12px;word-break:break-word">${esc(t.description || '(no description)')}</div>
     ${t.flags.map((f) => `<div class="flag" style="margin:0 0 8px">⚠ ${esc(f)}</div>`).join('')}
     <div id="terr"></div>
+    ${t.is_refund ? `<div class="card small"><b>Refund / Reversal</b><p>${t.original_expense ? `Original: ${esc(t.original_expense.merchant)} · ${fdate(t.original_expense.date)} · ${money(t.original_expense.amount_minor)}. Remaining: ${money(t.remaining_net_minor)}` : 'Unlinked · spending adjusted on refund date'}</p><button class="btn sm" id="refund-link-edit">Link / unlink</button></div>` : ''}
+    ${t.refund_status ? `<p class="small"><b>${t.refund_status === 'fully' ? 'Fully Refunded' : 'Partially Refunded'}</b> · Original ${money(t.amount_minor)} · Net ${money(t.net_expense_minor)}</p>` : ''}
     ${t.is_split ? `<div class="field"><label>Split across</label>${t.splits.map((s) => `<div class="row small">${catDot(s)}<span class="grow">${esc(s.category_name)}</span><b>${money(s.amount_minor)}</b></div>`).join('')}<p class="small muted" style="margin-top:6px">To change a split, send it back to review.</p></div>` : ''}
     <div class="field"><label>Category</label><div class="row" id="tcats" style="gap:8px">${S.cats.map((c) => `<button class="pill" data-c="${c.id}" style="cursor:pointer;border:1.5px solid ${c.id === catId ? esc(c.color) : 'transparent'}">${catDot(c)}${esc(c.name)}</button>`).join('')}</div></div>
-    <div class="grid g2"><div class="field"><label>Type</label><select id="tt">${['expense', 'income', 'transfer'].map((k) => `<option value="${k}" ${k === type ? 'selected' : ''}>${typeLabel[k]}</option>`).join('')}</select></div>
+    <div class="grid g2"><div class="field"><label>Type</label><select id="tt">${(t.direction === 'credit' ? ['income', 'transfer', 'refund'] : ['expense', 'transfer']).map((k) => `<option value="${k}" ${k === type ? 'selected' : ''}>${typeLabel[k]}</option>`).join('')}</select></div>
       <div class="field"><label>Repeats</label><select id="tr"><option value="">Not recurring</option>${['weekly', 'monthly', 'yearly'].map((f) => `<option value="${f}" ${recurring && t.recurring_freq === f ? 'selected' : ''}>${f[0].toUpperCase() + f.slice(1)}</option>`).join('')}</select></div></div>
     <label class="check small"><input type="checkbox" id="tremember"> Remember classification for future imports</label>
     <div class="field"><label for="tn">Note</label><input id="tn" maxlength="500" value="${esc(t.note || '')}" placeholder="Add a note"></div>
@@ -138,6 +181,7 @@ async function openTxn(id, done) {
       <div class="txn-editor-confirm"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tsave">Save changes</button></div>
     </div>
     `);
+  if ($('#refund-link-edit',m.el)) $('#refund-link-edit',m.el).onclick=()=>{m.close();openRefundLink(id).then(()=>done&&done());};
   $('#txn-create-tag',m.el).onclick=()=>{
     const dialog=modal('<h2>New tag</h2><div class="field"><label>Name</label><input id="tag-new-name" maxlength="80"></div><div class="field"><label>Type</label><select id="tag-new-kind"><option value="trip">Trip</option><option value="person">Person / beneficiary</option><option value="custom">Other</option></select></div><div id="tag-new-err"></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="tag-new-save">Create</button></div>');
     $('[data-x]',dialog.el).onclick=()=>dialog.close();
@@ -194,7 +238,7 @@ async function openTxn(id, done) {
       const prompt=modal('<h2>Possible related payments</h2><p class="muted small">These are suggestions based on amount, date and description. Confirm only genuine loan, repayment or pass-through transactions.</p>'
         +'<div id="match-error"></div><div class="list">'+(matches.map(t=>'<label class="check"><input type="checkbox" data-match="'+t.id+'"><span>'+fdate(t.date)+' · '+esc(t.merchant||t.description)+' · '+money(t.amount_minor)+' · '+esc(t.reason)+'</span></label>').join('')||'<p class="muted">No strong matches found. Use Linked money to link manually.</p>')+'</div>'
         +'<div class="field"><label>Group name</label><input id="match-name" value="'+esc(t.merchant||'Related payments')+'"></div>'
-        +'<div class="field"><label>Kind</label><select id="match-kind"><option value="pass_through">Pass-through</option><option value="loan">Loan</option><option value="repayment">Repayment</option><option value="transfer">Transfer</option></select></div>'
+        +'<div class="field"><label>Kind</label><select id="match-kind"><option value="pass_through">Pass-through</option><option value="loan">Loan</option><option value="repayment">Repayment</option><option value="transfer">Transfer</option><option value="refund">Refund / Reversal</option></select></div>'
         +'<div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="match-confirm">Confirm selected links</button></div>');
       $('[data-x]',prompt.el).onclick=()=>prompt.close();
       $('#match-confirm',prompt.el).onclick=async()=>{
@@ -215,7 +259,17 @@ async function openTxn(id, done) {
     if ($('#td', m.el).value !== t.date) body.date = $('#td', m.el).value;
     const amt = toMinor($('#ta', m.el).value); if (!t.is_split && amt && amt !== t.amount_minor) body.amount_minor = amt;
     if ($('#tdir', m.el).value !== t.direction) body.direction = $('#tdir', m.el).value;
-    patch(body, 'Saved', true);
+    if (body.type==='refund' && (!catId || cat(catId)?.kind!=='expense')) {
+      $('#terr',m.el).textContent='Choose an expense category for this refund.';return;
+    }
+    if (body.type==='refund') {
+      (async()=>{try{
+        await api('/transactions/'+id,{method:'PATCH',body});
+        await api('/transactions/'+id+'/tags',{method:'PUT',body:{tag_ids:$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}});
+        m.close();toast('Refund saved');done&&done();
+        if(!t.refund_of_id)await openRefundLink(id);
+      }catch(e){$('#terr',m.el).textContent=e.message;}})();
+    } else patch(body,'Saved',true);
   };
 }
 

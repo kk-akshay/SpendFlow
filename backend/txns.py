@@ -22,7 +22,7 @@ LEFT JOIN categories c ON c.id = t.category_id
 
 FREQS = ("weekly", "monthly", "yearly")
 TYPES = ("income", "expense", "transfer")
-SNAP_FIELDS = ("category_id", "note", "recurring", "recurring_freq", "type", "status",
+SNAP_FIELDS = ("category_id", "note", "recurring", "recurring_freq", "type", "status", "is_refund", "refund_of_id",
                "reviewed_at", "skipped_at", "transfer_pair_id", "flags", "dup_status")
 
 
@@ -39,6 +39,7 @@ def serialize(row) -> dict:
     d["flags"] = json.loads(d.get("flags") or "[]")
     d["recurring"] = bool(d.get("recurring"))
     d["is_split"] = (d.pop("split_count", 0) or 0) > 0
+    d["is_refund"] = bool(d.get("is_refund"))
     d.pop("user_id", None)
     d.pop("created_at", None)
     return d
@@ -49,6 +50,20 @@ def get_txn(db, user_id: int, txn_id: int) -> dict | None:
     if not row:
         return None
     d = serialize(row)
+    from . import refunds
+    if d["is_refund"] and d.get("refund_of_id"):
+        orig = db.execute(
+            "SELECT id,date,merchant,amount_minor,category_id FROM transactions WHERE id=? AND user_id=?",
+            (d["refund_of_id"], user_id),
+        ).fetchone()
+        if orig:
+            d["original_expense"] = dict(orig)
+            d["remaining_net_minor"] = max(0, orig["amount_minor"] - refunds.linked_total(db, user_id, orig["id"]))
+    elif d["direction"] == "debit" and d["type"] == "expense":
+        total = refunds.linked_total(db, user_id, txn_id)
+        d["refunded_minor"] = total
+        d["net_expense_minor"] = max(0, d["amount_minor"] - total)
+        d["refund_status"] = ("fully" if total == d["amount_minor"] else "partially") if total else None
     d["splits"] = [dict(r) for r in db.execute(
         "SELECT s.id, s.category_id, c.name AS category_name, c.color AS category_color, s.amount_minor, s.note "
         "FROM splits s JOIN categories c ON c.id=s.category_id WHERE s.txn_id=? ORDER BY s.id", (txn_id,))]
@@ -141,11 +156,22 @@ def restore(db, user_id: int, snaps: list[dict]) -> int:
         if pair is not None and not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=?", (pair, user_id)).fetchone():
             pair = None
         flags = s.get("flags") if isinstance(s.get("flags"), str) else "[]"
+        from . import refunds
+        target = s.get("refund_of_id") if s.get("is_refund") else None
+        row = db.execute("SELECT * FROM transactions WHERE id=? AND user_id=?", (s["id"],user_id)).fetchone()
+        if target is not None:
+            p = refunds._owned(db,user_id,target)
+            if not p or row["direction"] != "credit" or p["type"] != "expense" or p["direction"] != "debit":
+                target = None
+            elif refunds.linked_total(db,user_id,target,s["id"]) + row["amount_minor"] > p["amount_minor"]:
+                target = None
         db.execute(
             "UPDATE transactions SET category_id=?, note=?, recurring=?, recurring_freq=?, type=?, status=?, "
-            "reviewed_at=?, skipped_at=?, transfer_pair_id=?, flags=? WHERE id=?",
+            "reviewed_at=?, skipped_at=?, transfer_pair_id=?, flags=?, is_refund=?, refund_of_id=? WHERE id=? AND user_id=?",
             (cat, (s.get("note") or None) and str(s["note"])[:500], 1 if s.get("recurring") else 0, freq, ttype,
-             status, s.get("reviewed_at"), s.get("skipped_at"), pair, flags, s["id"]))
+             status, s.get("reviewed_at"), s.get("skipped_at"), pair, flags,
+             1 if s.get("is_refund") and row["direction"] == "credit" and ttype=="expense" else 0,
+             target if ttype=="expense" else None, s["id"],user_id))
         db.execute("DELETE FROM splits WHERE txn_id=?", (s["id"],))
         for sp in s.get("splits") or []:
             if isinstance(sp.get("amount_minor"), int) and sp["amount_minor"] > 0 and get_category(db, user_id, sp.get("category_id")):
@@ -208,16 +234,38 @@ def apply_category(db, user_id: int, txn_id: int, p: dict) -> dict:
         category_id = cat["id"]
         clean = []
 
-    ttype = p.get("type") if p.get("type") in TYPES else derived
+    requested = p.get("type")
+    if requested == "refund":
+        if t["direction"] != "credit":
+            raise ValueError("Only incoming transactions can be refunds.")
+        ttype = "expense"
+        refund_flag = 1
+        if splits:
+            raise ValueError("Refunds cannot be split. Use a single expense category.")
+    else:
+        ttype = requested if requested in TYPES else ("expense" if t["is_refund"] else derived)
+        refund_flag = 1 if t["is_refund"] and ttype == "expense" else 0
+    if refund_flag and cat and cat["kind"] != "expense":
+        raise ValueError("Refunds must use an expense category.")
+    if t["refund_of_id"] and not refund_flag:
+        raise ValueError("Unlink this refund before changing its type.")
+    if t["refund_of_id"] and cat:
+        parent = get_txn(db,user_id,t["refund_of_id"])
+        if not parent or parent["category_id"] != cat["id"]:
+            raise ValueError("Linked refunds inherit their purchase category; unlink to recategorize.")
+    if ttype != "expense" and t["direction"] == "debit":
+        from . import refunds
+        if refunds.linked_total(db,user_id,txn_id):
+            raise ValueError("Unlink existing refunds before changing this expense.")
     note = (str(p["note"]).strip()[:500] or None) if "note" in p and p["note"] is not None else t["note"]
     recurring = bool(p["recurring"]) if "recurring" in p else bool(t["recurring"])
     freq = (p.get("recurring_freq") if p.get("recurring_freq") in FREQS else (t["recurring_freq"] or "monthly")) if recurring else None
     ts = now()
 
     db.execute(
-        "UPDATE transactions SET category_id=?, note=?, recurring=?, recurring_freq=?, type=?, status='categorized', "
+        "UPDATE transactions SET category_id=?, note=?, recurring=?, recurring_freq=?, type=?, is_refund=?, status='categorized', "
         "reviewed_at=?, skipped_at=NULL WHERE id=?",
-        (category_id, note, 1 if recurring else 0, freq, ttype, ts, txn_id))
+        (category_id, note, 1 if recurring else 0, freq, ttype, refund_flag, ts, txn_id))
     db.execute("DELETE FROM splits WHERE txn_id=?", (txn_id,))
     for cid, amt, snote in clean:
         db.execute("INSERT INTO splits(txn_id,category_id,amount_minor,note) VALUES(?,?,?,?)", (txn_id, cid, amt, snote))
@@ -246,12 +294,12 @@ def apply_category(db, user_id: int, txn_id: int, p: dict) -> dict:
                 db.execute("UPDATE transactions SET transfer_pair_id=NULL, flags=? WHERE id=?",
                            (_strip_transfer_flags(t["flags"]), txn_id))
 
-    if p.get("remember") and cat and t["merchant_key"]:
+    if p.get("remember") and cat and t["merchant_key"] and not refund_flag:
         from . import ledger
         ledger.remember(db, user_id, t, cat["id"], ttype)
 
     applied = 0
-    if p.get("apply_similar") and cat and t["merchant_key"]:
+    if p.get("apply_similar") and cat and t["merchant_key"] and not refund_flag:
         rows = db.execute(
             "SELECT id FROM transactions WHERE user_id=? AND account_id=? AND merchant_key=? AND direction=? AND status='pending' "
             "AND id!=? AND transfer_pair_id IS NULL AND removed_at IS NULL AND (dup_status IS NULL OR dup_status='cleared')",
@@ -359,8 +407,12 @@ def search(db, user_id: int, f: dict) -> dict:
     if f.get("status") in ("pending", "categorized", "skipped"):
         where.append("t.status=?")
         args.append(f["status"])
-    if f.get("type") in TYPES:
+    if f.get("type") == "refund":
+        where.append("t.is_refund=1")
+    elif f.get("type") in TYPES:
         where.append("t.type=?")
+        if f["type"]=="expense":
+            where.append("t.is_refund=0")
         args.append(f["type"])
     if f.get("recurring"):
         where.append("t.recurring=1")
@@ -383,8 +435,8 @@ def search(db, user_id: int, f: dict) -> dict:
     base = " FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories c ON c.id=t.category_id WHERE " + " AND ".join(where)
     agg = db.execute(
         "SELECT COUNT(*) n, "
-        "COALESCE(SUM(CASE WHEN t.type='income' AND t.direction='credit' THEN t.amount_minor END),0) money_in, "
-        "COALESCE(SUM(CASE WHEN t.type='expense' AND t.direction='debit' THEN t.amount_minor END),0) money_out" + base, args).fetchone()
+        "COALESCE(SUM(CASE WHEN t.direction='credit' THEN t.amount_minor END),0) money_in, "
+        "COALESCE(SUM(CASE WHEN t.direction='debit' THEN t.amount_minor END),0) money_out" + base, args).fetchone()
     rows = db.execute(SELECT_TXN + " WHERE " + " AND ".join(where) + f" ORDER BY {order} LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
     return {"items": [serialize(r) for r in rows], "total": agg["n"], "money_in": agg["money_in"],
             "money_out": agg["money_out"], "page": offset // limit + 1, "pages": max(1, -(-agg["n"] // limit))}
@@ -407,14 +459,24 @@ def bulk(db, user_id: int, ids: list[int], action: str, p: dict) -> dict:
             snaps.append(snapshot(db, i))
             db.execute("DELETE FROM splits WHERE txn_id=?", (i,))
             db.execute("UPDATE transactions SET category_id=NULL, status='pending', reviewed_at=NULL, skipped_at=NULL, "
-                       "type=CASE WHEN transfer_pair_id IS NOT NULL THEN 'transfer' WHEN direction='credit' THEN 'income' ELSE 'expense' END "
+                       "type=CASE WHEN transfer_pair_id IS NOT NULL THEN 'transfer' WHEN direction='credit' AND is_refund=0 THEN 'income' ELSE 'expense' END "
                        "WHERE id=?", (i,))
     elif action == "type":
-        if p.get("type") not in TYPES:
+        if p.get("type") not in (*TYPES, "refund"):
             raise ValueError("Unknown type.")
         for i in own:
             snaps.append(snapshot(db, i))
-            db.execute("UPDATE transactions SET type=? WHERE id=?", (p["type"], i))
+            row = db.execute("SELECT * FROM transactions WHERE id=? AND user_id=?", (i,user_id)).fetchone()
+            from . import refunds
+            new_type = p["type"]
+            if new_type == "refund" and row["direction"] != "credit":
+                raise ValueError("Only incoming transactions can be refunds.")
+            if row["refund_of_id"] and new_type != "refund":
+                raise ValueError("Unlink the refund before changing its type.")
+            if row["direction"] == "debit" and new_type != "expense" and refunds.linked_total(db,user_id,i):
+                raise ValueError("Unlink refunds before changing the purchase type.")
+            db.execute("UPDATE transactions SET type=?,is_refund=? WHERE id=?",
+                       ("expense" if new_type=="refund" else new_type, 1 if new_type=="refund" else 0,i))
     elif action == "delete":
         if own:
             marks = ",".join("?" * len(own))

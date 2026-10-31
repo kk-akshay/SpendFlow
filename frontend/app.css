@@ -409,3 +409,14 @@ input[type="date"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.8}
 .account-hub-row{display:flex;align-items:center;gap:8px;min-width:0;padding:12px 0;border-top:1px solid var(--line)}
 .account-hub-row .grow{min-width:0;overflow-wrap:anywhere}
 @media(max-width:560px){.settings-category-tools{flex-wrap:wrap}.settings-category-tools select{max-width:none;width:100%}.account-hub-row{flex-wrap:wrap}.account-hub-row .grow{flex-basis:100%}}
+
+/* Shared mobile keyboard and dialog viewport handling. No keyboard-height guesses. */
+@supports (height:100dvh) {
+  .scrim { top:var(--keyboard-viewport-offset,0px); bottom:auto; height:var(--keyboard-viewport-height,100dvh); overflow:hidden; }
+  .scrim .modal { max-height:calc(var(--keyboard-viewport-height,100dvh) - 24px); overflow-y:auto; overscroll-behavior:contain; }
+}
+@media(max-width:560px) {
+  .scrim .modal { max-height:var(--keyboard-viewport-height,100dvh); }
+  .modal .foot, .modal .txn-editor-confirm { position:sticky; bottom:0; background:var(--surface); padding:10px 0 calc(4px + env(safe-area-inset-bottom)); z-index:2; }
+  .modal input, .modal textarea, .modal select { font-size:16px; scroll-margin-block:72px; }
+}
