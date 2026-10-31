@@ -102,7 +102,11 @@ def _add_months_date(d: date, n: int) -> date:
 
 
 def month_list(db, user_id: int) -> list[str]:
-    return [r["month"] for r in db.execute(f"SELECT DISTINCT month FROM ({LINES}) ORDER BY month", (user_id,))]
+    # Keep cash-movement months visible even when all their refunds are linked
+    # back to purchases in earlier months.
+    return [r["month"] for r in db.execute(
+        f"SELECT DISTINCT substr(t.date,1,7) AS month FROM transactions t "
+        f"WHERE t.user_id=? AND {ACTIVE} ORDER BY month", (user_id,))]
 
 
 def pick_month(db, user_id: int, month: str | None) -> str | None:
@@ -268,16 +272,20 @@ def dashboard(db, user_id: int, month: str | None) -> dict:
     if month == today.strftime("%Y-%m"):
         cur_cum = [v if d + 1 <= today.day else None for d, v in enumerate(cur_cum)]
 
+    # Account movement is a cash-flow view: use actual bank dates and amounts,
+    # not the purchase-date net-expense ledger used by budgets and charts.
     accounts = []
     for r in db.execute(
-        f"SELECT a.id, a.name, "
-        f"SUM(CASE WHEN x.type='income' THEN ({INC.replace('direction', 'x.direction').replace('amount_minor', 'x.amount_minor')}) ELSE 0 END) AS income, "
-        f"SUM(CASE WHEN x.type='expense' THEN ({EXP.replace('direction', 'x.direction').replace('amount_minor', 'x.amount_minor')}) ELSE 0 END) AS expense, "
-        f"SUM(CASE WHEN x.type='transfer' AND x.direction='credit' THEN x.amount_minor ELSE 0 END) AS transfer_in, "
-        f"SUM(CASE WHEN x.type='transfer' AND x.direction='debit' THEN x.amount_minor ELSE 0 END) AS transfer_out "
-        f"FROM accounts a LEFT JOIN ({LINES}) x ON x.account_id=a.id AND x.month=? WHERE a.user_id=? GROUP BY a.id ORDER BY a.name",
-        (user_id, month, user_id)):
-        accounts.append({k: (r[k] or 0) if k not in ("id", "name") else r[k] for k in r.keys()})
+        f"SELECT a.id,a.name,"
+        f"COALESCE(SUM(CASE WHEN t.direction='credit' AND t.type!='transfer' THEN t.amount_minor ELSE 0 END),0) AS income,"
+        f"COALESCE(SUM(CASE WHEN t.direction='debit' AND t.type!='transfer' THEN t.amount_minor ELSE 0 END),0) AS expense,"
+        f"COALESCE(SUM(CASE WHEN t.direction='credit' AND t.type='transfer' THEN t.amount_minor ELSE 0 END),0) AS transfer_in,"
+        f"COALESCE(SUM(CASE WHEN t.direction='debit' AND t.type='transfer' THEN t.amount_minor ELSE 0 END),0) AS transfer_out "
+        f"FROM accounts a LEFT JOIN transactions t ON t.account_id=a.id AND t.user_id=a.user_id "
+        f"AND substr(t.date,1,7)=? AND {ACTIVE} "
+        f"WHERE a.user_id=? GROUP BY a.id,a.name ORDER BY a.name",
+        (month,user_id)):
+        accounts.append(dict(r))
 
     recent = [serialize(r) for r in db.execute(
         SELECT_TXN + f" WHERE t.user_id=? AND {ACTIVE} ORDER BY t.date DESC, COALESCE(t.time,'') DESC, t.id DESC LIMIT 8", (user_id,))]
