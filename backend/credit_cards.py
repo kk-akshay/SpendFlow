@@ -15,11 +15,14 @@ def overview(db, uid, month=None):
         "AND t.transfer_pair_id IS NULL ORDER BY t.date DESC LIMIT 2000",(uid,))]
     results=[]
     for card in cards:
-        transactions=[dict(t) for t in db.execute(
-            f"SELECT t.* FROM transactions t WHERE t.user_id=? AND t.account_id=? AND {ACTIVE} "
-            "AND substr(t.date,1,7)=? ORDER BY t.date DESC", (uid,card["id"],month))]
-        spent=sum(t["amount_minor"] for t in transactions if t["direction"]=="debit" and t["type"]=="expense")
-        spent-=sum(t["amount_minor"] for t in transactions if t["direction"]=="credit" and t["type"]=="expense")
+        # Monthly card limits use the same purchase-date net expense ledger as
+        # budgets. Available credit and outstanding below use actual cash flow.
+        from .analytics import LINES, EXP
+        spent = db.execute(
+            f"SELECT COALESCE(SUM({EXP}),0) FROM ({LINES}) "
+            "WHERE account_id=? AND month=? AND type='expense' AND kind!='savings'",
+            (uid, card["id"], month),
+        ).fetchone()[0]
         spent=max(0,spent)
         limit=card["card_monthly_limit_minor"] or 0
         statements=[dict(st) for st in db.execute(
@@ -51,7 +54,8 @@ def overview(db, uid, month=None):
             f"SELECT t.* FROM transactions t WHERE t.user_id=? AND t.account_id=? "
             f"AND t.direction='credit' AND {ACTIVE} AND t.transfer_pair_id IS NULL",
             (uid,card["id"]))]
-        credits=[c for c in credits if c["type"]=="transfer" or PAYMENT.search(c["description"]+" "+c["merchant"])]
+        credits=[c for c in credits if not c["is_refund"] and not c["refund_of_id"]
+                 and (c["type"]=="transfer" or PAYMENT.search(c["description"]+" "+c["merchant"]))]
         for bank in bank_rows:
             if not PAYMENT.search(bank["description"]+" "+bank["merchant"]):
                 continue
@@ -98,6 +102,10 @@ def confirm_repayment(db,uid,card_id,bank_id):
                if x["bank_txn_id"]==bank_id),None)
     if item is None: raise ValueError("No unambiguous bank/card repayment match; review manually.")
     card_txn=item["card_txn_id"]
+    from . import refunds
+    for tid in (bank_id, card_txn):
+        row = db.execute("SELECT * FROM transactions WHERE id=? AND user_id=?", (tid,uid)).fetchone()
+        refunds.ensure_not_refund_linked(db,uid,row)
     transfer_cat=db.execute("SELECT id FROM categories WHERE user_id=? AND name='Transfers'",(uid,)).fetchone()
     cid=transfer_cat["id"] if transfer_cat else None
     for tid,partner in ((bank_id,card_txn),(card_txn,bank_id)):

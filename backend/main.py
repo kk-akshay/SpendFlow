@@ -421,7 +421,7 @@ def delete_category(cid: int, user=Depends(current_user), db=Depends(get_db)):
         db.execute("DELETE FROM splits WHERE txn_id=?", (tid,))
     db.execute(
         "UPDATE transactions SET category_id=NULL, status='pending', reviewed_at=NULL, "
-        "type=CASE WHEN transfer_pair_id IS NOT NULL THEN 'transfer' WHEN direction='credit' THEN 'income' ELSE 'expense' END "
+        "type=CASE WHEN transfer_pair_id IS NOT NULL THEN 'transfer' WHEN direction='credit' AND is_refund=0 THEN 'income' ELSE 'expense' END "
         "WHERE user_id=? AND (category_id=? OR id IN (%s))" % (",".join("?" * len(split_ids)) or "NULL"),
         [user["id"], cid] + split_ids)
     db.execute("DELETE FROM categories WHERE id=?", (cid,))
@@ -1203,7 +1203,7 @@ def export_csv(user=Depends(current_user), db=Depends(get_db)):
             amt = r["amount_minor"] / 100
             w.writerow([r["date"], safe(r["account_name"]), safe(r["merchant"]), safe(r["description"]),
                         amt if r["direction"] == "credit" else "", amt if r["direction"] == "debit" else "",
-                        r["type"], safe(r["category_name"] or ("Split" if r["split_count"] else "")), safe(r["note"]),
+                        "refund" if r["is_refund"] else r["type"], safe(r["category_name"] or ("Split" if r["split_count"] else "")), safe(r["note"]),
                         "yes" if r["recurring"] else "", r["status"],
                          r["refund_of_id"] if r["is_refund"] else "",
                          net_costs.get(r["id"], "")])
@@ -1532,7 +1532,9 @@ def create_flow(b: FlowIn, user=Depends(current_user), db=Depends(get_db)):
     rows=db.execute(f"SELECT * FROM transactions WHERE user_id=? AND id IN ({marks}) AND status!='staged' AND removed_at IS NULL", [user["id"],*ids]).fetchall()
     if len(rows)!=len(ids) or db.execute(f"SELECT 1 FROM flow_group_members WHERE txn_id IN ({marks}) LIMIT 1",ids).fetchone() or db.execute(f"SELECT 1 FROM transaction_group_members WHERE txn_id IN ({marks}) LIMIT 1",ids).fetchone():
         raise ValueError("Some transactions cannot be linked; check existing flow groups")
+    from . import refunds
     for row in rows:
+        refunds.ensure_not_refund_linked(db,user["id"],row)
         if row["dup_status"]=="suspected" or db.execute("SELECT 1 FROM splits WHERE txn_id=?", (row["id"],)).fetchone():
             raise ValueError("Resolve suspected duplicates and split categories before linking")
     cur=db.execute("INSERT INTO flow_groups(user_id,kind) VALUES(?,?)",(user["id"],b.kind))

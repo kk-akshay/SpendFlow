@@ -92,7 +92,9 @@ def add_members(db, user_id, group_id, ids):
                       f"AND id IN ({','.join('?' for _ in ids)})", [user_id, *ids]).fetchall()
     if len(rows) != len(ids):
         raise ValueError("Some transactions don't belong to this account.")
+    from . import refunds
     for row in rows:
+        refunds.ensure_not_refund_linked(db,user_id,row)
         if db.execute("SELECT 1 FROM transaction_group_members WHERE txn_id=?", (row["id"],)).fetchone():
             raise ValueError("A transaction can belong to only one group.")
         if db.execute("SELECT 1 FROM splits WHERE txn_id=?", (row["id"],)).fetchone():
