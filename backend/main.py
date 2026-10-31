@@ -1174,6 +1174,13 @@ def export_csv(user=Depends(current_user), db=Depends(get_db)):
 
     from . import refunds
 
+    # Streaming responses may outlive the request database session; compute
+    # purchase net costs before opening the CSV generator.
+    net_costs = {
+        r["id"]: (r["amount_minor"]-refunds.linked_total(db,user["id"],r["id"]))/100
+        for r in rows if r["type"]=="expense" and r["direction"]=="debit"
+    }
+
     def gen():
         buf = io.StringIO()
         w = csv.writer(buf)
@@ -1187,8 +1194,7 @@ def export_csv(user=Depends(current_user), db=Depends(get_db)):
                         r["type"], safe(r["category_name"] or ("Split" if r["split_count"] else "")), safe(r["note"]),
                         "yes" if r["recurring"] else "", r["status"],
                          r["refund_of_id"] if r["is_refund"] else "",
-                         (r["amount_minor"]-refunds.linked_total(db,user["id"],r["id"]))/100
-                         if r["type"]=="expense" and r["direction"]=="debit" else ""])
+                         net_costs.get(r["id"], "")])
             yield buf.getvalue()
 
     return StreamingResponse(gen(), media_type="text/csv",

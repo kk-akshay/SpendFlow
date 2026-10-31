@@ -54,6 +54,9 @@ details=ok(c.get(f"/api/transactions/{purchase}"))["txn"]
 assert details["refunded_minor"]==20000 and details["refund_status"]=="partially"
 assert ok(c.get(f"/api/transactions/{r1}"))["txn"]["original_expense"]["id"]==purchase
 assert ok(c.get("/api/tags"))[0]["expense_minor"]==20000
+assert any(x["id"]==tag for x in ok(c.get(f"/api/transactions/{r1}/tags")))
+assert c.put(f"/api/transactions/{r1}/tags",json={"tag_ids":[]}).status_code==400
+assert any(x["id"]==r1 for x in ok(c.get(f"/api/tags/{tag}/transactions"))["transactions"])
 assert ok(c.get("/api/tags/"+str(tag)+"/transactions"))["transactions"][0]["id"]==purchase
 assert total("2026-10")==20000 # repeated dashboard calls cannot double-count
 # Partial refund totals should also feed budgets.
