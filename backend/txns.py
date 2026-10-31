@@ -467,6 +467,10 @@ def bulk(db, user_id: int, ids: list[int], action: str, p: dict) -> dict:
         for i in own:
             snaps.append(snapshot(db, i))
             row = db.execute("SELECT * FROM transactions WHERE id=? AND user_id=?", (i,user_id)).fetchone()
+            if db.execute("SELECT 1 FROM (SELECT txn_id FROM transaction_group_members UNION ALL "
+                          "SELECT txn_id FROM flow_group_members UNION ALL SELECT txn_id FROM people_transactions) g "
+                          "WHERE g.txn_id=?", (i,)).fetchone():
+                raise ValueError("Unlink this transaction from its group before changing its type.")
             from . import refunds
             new_type = p["type"]
             if new_type == "refund" and row["direction"] != "credit":

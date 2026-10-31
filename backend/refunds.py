@@ -41,6 +41,14 @@ def validate_amount_change(db, user_id, txn, amount_minor, direction):
             raise ValueError("This purchase has refunds. Keep its amount above the refunded total, or unlink them first.")
 
 
+def ensure_not_refund_linked(db, user_id, row):
+    """Prevent a legacy flow/group from silently overriding refund accounting."""
+    if row["is_refund"] or row["refund_of_id"]:
+        raise ValueError("This is a refund. Unlink it and change its type before using it as a loan, transfer or repayment.")
+    if row["direction"] == "debit" and linked_total(db, user_id, row["id"]):
+        raise ValueError("This purchase has linked refunds. Unlink them before treating it as a transfer or repayment.")
+
+
 def link(db, user_id, refund_id, purchase_id):
     if refund_id == purchase_id:
         raise ValueError("A refund cannot link to itself.")
@@ -123,8 +131,10 @@ def candidates(db, user_id, refund_id, q="", from_date=None, to_date=None, amoun
     found = []
     for row in rows:
         d = dict(row)
+        # Allow reselecting a fully refunded purchase while editing its link.
         remaining = d["amount_minor"] - d["refunded_minor"]
-        if remaining < refund["amount_minor"]:
+        eligible = remaining + (refund["amount_minor"] if refund["refund_of_id"] == d["id"] else 0)
+        if eligible < refund["amount_minor"]:
             continue
         days = (today - date.fromisoformat(d["date"])).days
         shared = words & token(d["merchant"] + " " + d["description"])

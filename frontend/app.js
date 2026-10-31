@@ -92,7 +92,9 @@ function installMobileKeyboardSupport() {
     document.documentElement.style.setProperty('--keyboard-viewport-offset', viewport.offsetTop + 'px');
     const active = document.activeElement;
     if (active?.matches?.('input,textarea,select,[contenteditable="true"]')) {
-      requestAnimationFrame(() => active.scrollIntoView({block:'nearest'}));
+      requestAnimationFrame(() => {
+        if (document.activeElement === active) active.scrollIntoView({block:'nearest'});
+      });
     }
   };
   viewport.addEventListener('resize', adjust);
