@@ -18,15 +18,45 @@ from datetime import date, timedelta
 from .config import CURRENCY
 from .txns import ACTIVE, DUP_OK, SELECT_TXN, serialize
 
+# One shared purchase-based expense ledger. Linked refunds are applied to the
+# original purchase's date/category (and split categories); the incoming bank
+# transaction stays on its actual date and is excluded from purchase totals.
+# Unlinked refund credits remain negative expenses on their own dates.
+# The first split receives any integer-rounding remainder so cents never vanish.
 LINES = f"""
 SELECT t.id, t.date, substr(t.date,1,7) AS month, t.direction, t.type, t.account_id, t.status, t.merchant, t.merchant_key,
-       COALESCE(s.category_id, t.category_id) AS category_id,
-       COALESCE(s.amount_minor, t.amount_minor) AS amount_minor,
+       COALESCE(s.category_id,t.category_id) AS category_id,
+       COALESCE(s.amount_minor,t.amount_minor) -
+       CASE WHEN t.direction='debit' AND t.type='expense' AND t.is_refund=0 THEN
+           CASE WHEN s.id IS NULL THEN COALESCE(rt.refunded_minor,0)
+                WHEN s.id=(SELECT MIN(ss.id) FROM splits ss WHERE ss.txn_id=t.id) THEN
+                     COALESCE(rt.refunded_minor,0) -
+                     COALESCE((SELECT SUM(CAST(FLOOR(1.0*COALESCE(rt.refunded_minor,0)*ss.amount_minor/t.amount_minor) AS BIGINT))
+                               FROM splits ss WHERE ss.txn_id=t.id AND ss.id<>s.id),0)
+                ELSE CAST(FLOOR(1.0*COALESCE(rt.refunded_minor,0)*s.amount_minor/t.amount_minor) AS BIGINT)
+           END
+       ELSE 0 END AS amount_minor,
        COALESCE(c.kind,'expense') AS kind
 FROM transactions t
-LEFT JOIN splits s ON s.txn_id = t.id
-LEFT JOIN categories c ON c.id = COALESCE(s.category_id, t.category_id)
-WHERE t.user_id = ? AND t.status IN ('pending','categorized','skipped') AND t.removed_at IS NULL AND {DUP_OK}
+LEFT JOIN splits s ON s.txn_id=t.id
+LEFT JOIN categories c ON c.id=COALESCE(s.category_id,t.category_id)
+LEFT JOIN (
+    SELECT r.user_id,r.refund_of_id,SUM(r.amount_minor) AS refunded_minor
+    FROM transactions r
+    WHERE r.is_refund=1 AND r.refund_of_id IS NOT NULL
+      AND r.status IN ('pending','categorized','skipped') AND r.removed_at IS NULL
+      AND (r.dup_status IS NULL OR r.dup_status='cleared')
+    GROUP BY r.user_id,r.refund_of_id
+) rt ON rt.refund_of_id=t.id AND rt.user_id=t.user_id
+WHERE t.user_id=? AND t.status IN ('pending','categorized','skipped')
+  AND t.removed_at IS NULL AND {DUP_OK}
+  AND NOT (t.is_refund=1 AND t.refund_of_id IS NOT NULL AND EXISTS(
+      SELECT 1 FROM transactions p
+      WHERE p.id=t.refund_of_id AND p.user_id=t.user_id
+        AND p.status IN ('pending','categorized','skipped') AND p.removed_at IS NULL
+        AND (p.dup_status IS NULL OR p.dup_status='cleared')
+        AND p.type='expense' AND p.direction='debit' AND p.is_refund=0
+  ))
 """
 
 EXP = "CASE WHEN direction='debit' THEN amount_minor ELSE -amount_minor END"

@@ -148,6 +148,9 @@ def init_postgres(sqlite_schema: str):
         # Existing installations can have a schema created before these fields.
         conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS removed_at TEXT")
         conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS excluded_rule_id BIGINT")
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS is_refund INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS refund_of_id BIGINT REFERENCES transactions(id) ON DELETE SET NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_refund_owner ON transactions(user_id,refund_of_id)")
         conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS card_monthly_limit_minor BIGINT NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS card_credit_limit_minor BIGINT NOT NULL DEFAULT 0")
         conn.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS card_opening_outstanding_minor BIGINT NOT NULL DEFAULT 0")
