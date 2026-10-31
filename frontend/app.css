@@ -420,3 +420,20 @@ input[type="date"]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.8}
   .modal .foot, .modal .txn-editor-confirm { position:sticky; bottom:0; background:var(--surface); padding:10px 0 calc(4px + env(safe-area-inset-bottom)); z-index:2; }
   .modal input, .modal textarea, .modal select { font-size:16px; scroll-margin-block:72px; }
 }
+
+/* Transaction review: compact mobile-friendly hierarchy. */
+.review .tcard{min-width:0}
+.review-payee-heading{align-items:flex-start;min-width:0}
+.review-payee-heading .merchant{min-width:0;flex:1 1 100%;overflow-wrap:anywhere;word-break:normal;white-space:normal;line-height:1.25}
+.review-payee-heading .btn{margin-left:auto}
+.review-type-btn{border:1px solid var(--line)!important;background:transparent!important;border-radius:10px;white-space:nowrap}
+.review-amount-row{display:flex;align-items:center;gap:10px;min-width:0;margin:10px 0}
+.review-amount-row .amount{margin:0;font-weight:800;color:var(--text);font-size:clamp(25px,6vw,38px);letter-spacing:-.035em;overflow-wrap:anywhere}
+.review-direction{font-size:19px;font-weight:750;line-height:1;flex:none}
+.review-direction.is-expense{color:#ef6666}
+.review-direction.is-income{color:#43c98b}
+.review-direction.is-transfer{color:var(--muted)}
+.review-percent{color:var(--text);white-space:nowrap}
+.review-date-warning{display:inline-flex;align-items:center;gap:5px;margin:8px 0;padding:5px 9px;border:1px solid rgba(217,155,55,.35);border-radius:9px;background:transparent;color:#d9a348;font-size:12px;cursor:pointer}
+.review-date-warning:hover{background:rgba(217,155,55,.09)}
+@media(max-width:760px){.review{padding-bottom:calc(105px + env(safe-area-inset-bottom))}.review .cats{margin-bottom:16px}.review .tcard{max-width:100%}.review-payee-heading .merchant{font-size:clamp(20px,6vw,27px)}.review .progress .top{flex-wrap:wrap;gap:6px}}
