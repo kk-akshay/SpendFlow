@@ -196,7 +196,7 @@ async function openTxn(id, done) {
   };
   $$('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if ($('#tt', m.el).value === 'transfer' || c.kind === 'expense') $('#tt', m.el).value = t.direction === 'credit' && c.kind !== 'expense' ? 'income' : 'expense'; }));
   $('[data-x]', m.el).onclick = () => m.close();
-  const patch = async (body, msg, saveTags = false) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); if(saveTags) await api('/transactions/' + id + '/tags',{method:'PUT',body:{tag_ids:$$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}}); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
+  const patch = async (body, msg, saveTags = false) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); if(saveTags && !t.refund_of_id) await api('/transactions/' + id + '/tags',{method:'PUT',body:{tag_ids:$$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}}); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
   $('#tperson',m.el).onclick=()=>{m.close();personLinkDialog(id,done);};
   $('#tflow', m.el).onclick = async () => {
@@ -238,7 +238,7 @@ async function openTxn(id, done) {
       const prompt=modal('<h2>Possible related payments</h2><p class="muted small">These are suggestions based on amount, date and description. Confirm only genuine loan, repayment or pass-through transactions.</p>'
         +'<div id="match-error"></div><div class="list">'+(matches.map(t=>'<label class="check"><input type="checkbox" data-match="'+t.id+'"><span>'+fdate(t.date)+' · '+esc(t.merchant||t.description)+' · '+money(t.amount_minor)+' · '+esc(t.reason)+'</span></label>').join('')||'<p class="muted">No strong matches found. Use Linked money to link manually.</p>')+'</div>'
         +'<div class="field"><label>Group name</label><input id="match-name" value="'+esc(t.merchant||'Related payments')+'"></div>'
-        +'<div class="field"><label>Kind</label><select id="match-kind"><option value="pass_through">Pass-through</option><option value="loan">Loan</option><option value="repayment">Repayment</option><option value="transfer">Transfer</option><option value="refund">Refund / Reversal</option></select></div>'
+        +'<div class="field"><label>Kind</label><select id="match-kind"><option value="pass_through">Pass-through</option><option value="loan">Loan</option><option value="repayment">Repayment</option><option value="transfer">Transfer</option></select></div>'
         +'<div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="match-confirm">Confirm selected links</button></div>');
       $('[data-x]',prompt.el).onclick=()=>prompt.close();
       $('#match-confirm',prompt.el).onclick=async()=>{
@@ -265,7 +265,7 @@ async function openTxn(id, done) {
     if (body.type==='refund') {
       (async()=>{try{
         await api('/transactions/'+id,{method:'PATCH',body});
-        await api('/transactions/'+id+'/tags',{method:'PUT',body:{tag_ids:$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}});
+        if(!t.refund_of_id) await api('/transactions/'+id+'/tags',{method:'PUT',body:{tag_ids:$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}});
         m.close();toast('Refund saved');done&&done();
         if(!t.refund_of_id)await openRefundLink(id);
       }catch(e){$('#terr',m.el).textContent=e.message;}})();
@@ -317,7 +317,7 @@ routes.transactions = async (main, [pre]) => {
       <select id="fcat" aria-label="Category"><option value="">All categories</option><option value="uncategorized">Needs a category</option>${S.cats.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
       <select id="facc" aria-label="Account"><option value="">All accounts</option>${S.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select></div>
       <details ${f.from ? 'open' : ''}><summary class="small muted" style="cursor:pointer">More filters</summary><div class="grid g3" style="margin-top:10px">
-        <select id="ftype" aria-label="Type"><option value="">Any type</option><option value="income">Income</option><option value="expense">Expense</option><option value="transfer">Transfer</option></select>
+        <select id="ftype" aria-label="Type"><option value="">Any type</option><option value="income">Income</option><option value="expense">Expense</option><option value="transfer">Transfer</option><option value="refund">Refund / Reversal</option></select>
         <select id="fsort" aria-label="Sort"><option value="date_desc">Newest first</option><option value="date_asc">Oldest first</option><option value="amount_desc">Largest first</option><option value="amount_asc">Smallest first</option></select>
         <label class="check"><input type="checkbox" id="frec"> Recurring only</label>
         <div><label for="ffrom">From</label><input type="date" id="ffrom" value="${esc(f.from.replace(/-31$/, '-01'))}"></div><div><label for="fto">To</label><input type="date" id="fto"></div>
