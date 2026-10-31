@@ -31,7 +31,7 @@ routes.review = async (main) => {
     const { item, progress: p } = state;
     if (!item) return drawDone(p);
     const t = item.txn, sg = item.suggestion;
-    const type = typeOverride || t.type;
+    const type = typeOverride || (t.is_refund ? 'refund' : t.type);
     const sgCat = sg && cat(sg.category_id);
     const inflow = t.direction === 'credit';
     main.innerHTML = `<div class="review"><div class="row" style="justify-content:flex-end;margin-bottom:12px"><label class="small">Review order <select id="review-order" style="width:auto"><option value="desc" ${order === 'desc' ? 'selected' : ''}>Newest first</option><option value="asc" ${order === 'asc' ? 'selected' : ''}>Oldest first</option></select></label></div>${progressHtml(p)}
@@ -124,6 +124,8 @@ routes.review = async (main) => {
     try {
       const body = { ...payload, note: opts.note || undefined, recurring: opts.recurring || undefined, remember: !!opts.remember, apply_similar: opts.similar && state.item.similar_count > 0 && !!payload.category_id };
       if (typeOverride) body.type = typeOverride;
+      if (body.type==='refund' && !body.category_id && !body.splits) throw Error('Choose an expense category for this refund.');
+      if (body.type==='refund' && body.category_id && cat(body.category_id)?.kind!=='expense') throw Error('Choose an expense category for this refund.');
       const r = await api(`/review/${t.id}/categorize?scope=${scope}&order=${order}`, { method: 'POST', body });
       if (selectedTagIds.length) {
         try {
@@ -135,7 +137,10 @@ routes.review = async (main) => {
       selectedTagIds = [];
       lastUndo = r.undo; state = { item: r.item, progress: r.progress }; resetOpts();
       if (r.applied_similar) toast(`Applied to ${r.applied_similar} similar transaction${r.applied_similar > 1 ? 's' : ''} too`, { action: 'Undo', onAction: undo });
-      setTimeout(draw, 160);
+      if (body.type==='refund') {
+        await openRefundLink(t.id);
+        draw();
+      } else setTimeout(draw, 160);
     } catch (e) { card && card.classList.remove('out-r'); fail(e); }
     busy = false;
   }
@@ -226,7 +231,7 @@ routes.review = async (main) => {
   function typeDialog() {
     const t = state.item.txn;
     const m = modal(`<h2>What kind of transaction is this?</h2><p class="muted small" style="margin-bottom:14px">Transfers between your own accounts are left out of income and spending.</p>
-      <div class="grid">${['income', 'expense', 'transfer'].map((k) => `<button class="btn" data-k="${k}"><b>${typeLabel[k]}</b></button>`).join('')}</div>`);
+      <div class="grid">${(t.direction==='credit' ? ['income','transfer','refund'] : ['expense','transfer']).map((k) => `<button class="btn" data-k="${k}"><b>${typeLabel[k]}</b></button>`).join('')}</div>`);
     $$('[data-k]', m.el).forEach((b) => (b.onclick = () => {
       typeOverride = b.dataset.k; m.close();
       draw();
