@@ -40,12 +40,12 @@ routes.review = async (main) => {
           <div class="kind"><span class="pill ${type === 'transfer' ? '' : inflow ? 'good' : ''}">${typeLabel[type]}</span></div>
           <div class="review-payee-heading"><div class="merchant">${esc(t.merchant || 'Unknown merchant')}</div></div>
           <div class="review-quick-actions" role="group" aria-label="Edit transaction">
-            <button type="button" class="btn sm review-quick-btn" id="type-btn" title="Change transaction type" aria-haspopup="dialog"><span aria-hidden="true">⇄</span> Change type <span aria-hidden="true">⌄</span></button>
-            <button type="button" class="btn sm review-quick-btn" id="edit-payee-name" aria-label="Edit merchant or person name"><span aria-hidden="true">✎</span> Edit name</button>
+            <button type="button" class="btn sm review-quick-btn" id="type-btn" title="Change transaction type" aria-haspopup="dialog"><span class="review-action-symbol" aria-hidden="true">⇄</span><span>Change type</span><span class="review-action-caret" aria-hidden="true">⌄</span></button>
+            <button type="button" class="btn sm review-quick-btn" id="edit-payee-name" aria-label="Edit merchant or person name"><span class="review-action-symbol" aria-hidden="true">✎</span><span>Edit name</span></button>
           </div>
-          <div class="review-amount-row"><span class="review-direction ${type === 'transfer' ? 'is-transfer' : inflow ? 'is-income' : 'is-expense'}" aria-hidden="true">${type === 'transfer' ? '⇄' : inflow ? '↙' : '↗'}</span><div class="amount num ${type === 'transfer' ? '' : inflow ? 'amount-in' : 'amount-out'}">${type === 'transfer' ? '' : inflow ? '+' : '−'}${money(t.amount_minor)}</div></div>
+          <div class="review-amount-row"><span class="review-direction ${type === 'transfer' ? 'is-transfer' : inflow ? 'is-income' : 'is-expense'}" aria-hidden="true"><svg class="review-direction-icon" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="${type === 'transfer' ? 'M5 10H27 M21 4L27 10L21 16 M27 22H5 M11 16L5 22L11 28' : inflow ? 'M25 7L7 25 M7 12V25H20' : 'M7 25L25 7 M12 7H25V20'}"/></svg></span><div class="amount num ${type === 'transfer' ? '' : inflow ? 'amount-in' : 'amount-out'}">${type === 'transfer' ? '' : inflow ? '+' : '−'}${money(t.amount_minor)}</div></div>
           <div class="review-date-line"><span class="muted">${fdate(t.date)}${t.time ? ' · ' + esc(t.time) : ''} · ${esc(t.account_name)}</span>
-            <button type="button" class="review-date-warning" id="review-fix-date" aria-label="Edit transaction date">${t.flags.some(f => /date/i.test(f)) ? '⚠' : '✎'} Edit date</button></div>
+            <button type="button" class="review-date-warning" id="review-fix-date" aria-label="Edit transaction date"><span aria-hidden="true">✎</span> Edit date</button></div>
           ${type === 'refund' ? `<div class="review-refund-callout"><button type="button" class="btn sm review-refund-link" id="review-refund-link">↳ Link refund to purchase</button><span class="small muted">Save the refund with an expense category, then choose its original purchase.</span></div>` : ''}
           <div class="desc" title="As read from your statement. May contain errors.">${esc(t.description || '(no description)')}</div>
           ${t.flags.map((f) => `<div class="flag">⚠ ${esc(f)}</div>`).join('')}
@@ -269,8 +269,11 @@ routes.review = async (main) => {
 
   function typeDialog() {
     const t = state.item.txn;
-    const m = modal(`<h2>What kind of transaction is this?</h2><p class="muted small" style="margin-bottom:14px">Transfers between your own accounts are left out of income and spending.</p>
-      <div class="grid">${(t.direction==='credit' ? ['income','transfer','refund'] : ['expense','transfer']).map((k) => `<button class="btn" data-k="${k}"><b>${typeLabel[k]}</b></button>`).join('')}</div>`);
+    const currentType = typeOverride || (t.is_refund ? 'refund' : t.type);
+    const m = modal(`<h2>Change transaction type</h2><p class="muted small" style="margin-bottom:14px">Choose the correct type. It will be saved when you choose a category.</p>
+      <div class="review-type-options">${(t.direction==='credit' ? ['income','transfer','refund'] : ['expense','transfer']).map((k) => `<button type="button" class="btn review-type-choice ${k === currentType ? 'is-selected' : ''}" data-k="${k}" aria-pressed="${k === currentType}"><span>${typeLabel[k]}</span><span aria-hidden="true">${k === currentType ? '✓' : '›'}</span></button>`).join('')}</div>
+      <p class="small muted" style="margin-top:12px">Transfers between your own accounts are excluded from income and spending.</p><div class="foot"><button type="button" class="btn" data-x>Cancel</button></div>`);
+    $('[data-x]', m.el).onclick = () => m.close();
     $$('[data-k]', m.el).forEach((b) => (b.onclick = () => {
       typeOverride = b.dataset.k; m.close();
       draw();
