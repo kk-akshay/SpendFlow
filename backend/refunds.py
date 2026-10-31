@@ -132,10 +132,9 @@ def candidates(db, user_id, refund_id, q="", from_date=None, to_date=None, amoun
     for row in rows:
         d = dict(row)
         # Allow reselecting a fully refunded purchase while editing its link.
-        remaining = d["amount_minor"] - d["refunded_minor"] + (
-            refund["amount_minor"] if refund["refund_of_id"] == d["id"] else 0
-        )
-        if remaining < refund["amount_minor"]:
+        remaining = d["amount_minor"] - d["refunded_minor"]
+        eligible = remaining + (refund["amount_minor"] if refund["refund_of_id"] == d["id"] else 0)
+        if eligible < refund["amount_minor"]:
             continue
         days = (today - date.fromisoformat(d["date"])).days
         shared = words & token(d["merchant"] + " " + d["description"])
