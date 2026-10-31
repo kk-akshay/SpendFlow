@@ -134,7 +134,7 @@ async function openRefundLink(id) {
         const results=await api('/transactions/'+id+'/refund-candidates?'+params.toString());
         $('#rerror',dlg.el).textContent='';
         $('#rmatches',dlg.el).innerHTML=results.map(t=>'<div class="row" style="flex-wrap:nowrap;padding:8px 0"><div class="grow"><b>'+esc(t.merchant||t.description)+'</b><div class="small muted">'+fdate(t.date)+' · Original '+money(t.amount_minor)+' · Remaining '+money(t.remaining_minor)+'</div><div class="small muted">'+esc(t.reason)+'</div></div><button class="btn sm primary" data-link-refund="'+t.id+'">Link</button></div>').join('')||'<p class="small muted">No eligible expenses found. Change search filters or skip.</p>';
-        $('[data-link-refund]',dlg.el).forEach(btn=>btn.onclick=async()=>{
+        $$('[data-link-refund]',dlg.el).forEach(btn=>btn.onclick=async()=>{
           btn.disabled=true;
           try{await api('/transactions/'+id+'/refund-link',{method:'POST',body:{original_id:+btn.dataset.linkRefund}});dlg.close();toast('Refund linked');route();}
           catch(e){btn.disabled=false;$('#rerror',dlg.el).textContent=e.message;}
@@ -194,7 +194,7 @@ async function openTxn(id, done) {
       }catch(e){$('#tag-new-err',dialog.el).textContent=e.message;}
     };
   };
-  $('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if (c.kind === 'expense' && $('#tt', m.el).value !== 'refund') $('#tt', m.el).value = 'expense'; }));
+  $$('#tcats .pill', m.el).forEach((b) => (b.onclick = () => { catId = +b.dataset.c; changed = true; const c = cat(catId); $$('#tcats .pill', m.el).forEach((x) => (x.style.borderColor = x === b ? c.color : 'transparent')); if (c.kind === 'transfer') $('#tt', m.el).value = 'transfer'; else if (c.kind === 'income') $('#tt', m.el).value = 'income'; else if (c.kind === 'expense' && $('#tt', m.el).value !== 'refund') $('#tt', m.el).value = 'expense'; }));
   $('[data-x]', m.el).onclick = () => m.close();
   const patch = async (body, msg, saveTags = false) => { try { const r = await api('/transactions/' + id, { method: 'PATCH', body }); if(saveTags && !t.refund_of_id) await api('/transactions/' + id + '/tags',{method:'PUT',body:{tag_ids:$$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}}); m.close(); refreshBadge(); toast(msg, r.undo?.length ? { action: 'Undo', onAction: async () => { await api('/transactions/restore', { method: 'POST', body: { undo: r.undo } }); done && done(); } } : {}); done && done(); } catch (e) { $('#terr', m.el).innerHTML = `<div class="err-box">${esc(e.message)}</div>`; } };
   $('#trev', m.el).onclick = () => patch({ send_to_review: true }, 'Sent back to review');
@@ -265,7 +265,7 @@ async function openTxn(id, done) {
     if (body.type==='refund') {
       (async()=>{try{
         await api('/transactions/'+id,{method:'PATCH',body});
-        if(!t.refund_of_id) await api('/transactions/'+id+'/tags',{method:'PUT',body:{tag_ids:$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}});
+        if(!t.refund_of_id) await api('/transactions/'+id+'/tags',{method:'PUT',body:{tag_ids:$$('[data-assign-tag]:checked',m.el).map(x=>+x.dataset.assignTag)}});
         m.close();toast('Refund saved');done&&done();
         if(!t.refund_of_id)await openRefundLink(id);
       }catch(e){$('#terr',m.el).textContent=e.message;}})();
