@@ -39,6 +39,9 @@ with TestClient(app,headers={"x-requested-with":"spendflow"}) as c:
     others=add(bank,"2026-11-04",20000,"debit","Card bill repayment")
     assert c.post("/api/flows",json={"kind":"loan","transaction_ids":[others,purchase]}).status_code==400
     assert spend()==20000
+    # Old bulk edit must not override the accounting type of a flow member.
+    assert c.patch(f"/api/transactions/{refund}",json={"direction":"debit"}).status_code==400
+    assert spend()==20000
     # Current original purchase remains available among edit-link suggestions.
     matches=ok(c.get(f"/api/transactions/{refund}/refund-candidates"))
     assert any(x["id"]==purchase and x["remaining_minor"]==20000 for x in matches),matches

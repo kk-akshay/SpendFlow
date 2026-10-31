@@ -1092,6 +1092,9 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         if not iso:
             raise HTTPException(400, "That date isn't valid.")
         vals["date"] = iso
+    # Never leave the refund flag on a debit after editing its bank direction.
+    if row["is_refund"] and body.get("direction",row["direction"]) != "credit" and body.get("type") not in ("expense","transfer","income"):
+        raise ValueError("Change the refund to a normal transaction type before changing its direction.")
     if "amount_minor" in body or "direction" in body:
         from . import refunds
         refunds.validate_amount_change(db,uid,row,body.get("amount_minor") or row["amount_minor"],
