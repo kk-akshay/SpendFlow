@@ -223,7 +223,7 @@ routes.review = async (main) => {
       $('[data-x]', m.el).onclick = () => m.close();
       $('#review-date-save', m.el).onclick = async () => {
         const date = $('#review-date-input', m.el).value;
-        if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) { $('#review-date-error', m.el).textContent = 'Choose a valid date.'; return; }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { $('#review-date-error', m.el).textContent = 'Choose a valid date.'; return; }
         const button = $('#review-date-save', m.el); button.disabled = true;
         try { await api('/transactions/' + t.id, {method:'PATCH', body:{date}}); m.close(); await load(); toast('Date updated'); }
         catch (e) { $('#review-date-error', m.el).textContent = e.message; button.disabled = false; }
