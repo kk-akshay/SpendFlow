@@ -22,7 +22,7 @@ routes.review = async (main) => {
   function progressHtml(p) {
     const done = p.reviewed, total = p.total;
     const pct = total ? Math.round((100 * done) / total) : 0;
-    return `<div class="progress"><div class="top"><span><b class="num">${done}</b> of <span class="num">${total}</span> transactions reviewed</span>
+    return `<div class="progress"><div class="top"><span><b class="num">${done}</b> of <span class="num">${total}</span> transactions reviewed <b class="review-percent">(${pct}%)</b></span>
       <span>${p.skipped ? `<a href="#" id="toggle-scope">${scope === 'skipped' ? 'Back to main queue' : `${p.skipped} skipped`}</a>` : ''}</span></div>
       <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div></div>`;
   }
@@ -38,10 +38,11 @@ routes.review = async (main) => {
       <div class="stage" id="stage"><div class="swipe-hint r" id="hint-r">${sgCat ? 'ACCEPT' : ''}</div><div class="swipe-hint l" id="hint-l">SKIP</div>
         <article class="tcard enter" id="card" aria-label="Transaction to categorise">
           <div class="kind"><span class="pill ${type === 'transfer' ? '' : inflow ? 'good' : ''}">${typeLabel[type]}</span>
-            <button class="btn sm ghost" id="type-btn" title="Change type">Change type</button></div>
+            <button type="button" class="btn sm review-type-btn" id="type-btn" title="Change transaction type" aria-haspopup="dialog">Change type ▾</button></div>
           <div class="review-payee-heading"><div class="merchant">${esc(t.merchant || 'Unknown merchant')}</div><button type="button" class="btn sm" id="edit-payee-name" aria-label="Edit merchant or person name">✎ Edit name</button></div>
-          <div class="amount num ${inflow ? 'amount-in' : 'amount-out'}">${inflow ? '↑ +' : '↓ −'}${money(t.amount_minor)}</div>
-          <div class="muted">${fdate(t.date)}${t.time ? ' · ' + esc(t.time) : ''} · ${esc(t.account_name)}</div>
+          <div class="review-amount-row"><span class="review-direction ${type === 'transfer' ? 'is-transfer' : inflow ? 'is-income' : 'is-expense'}" aria-hidden="true">${type === 'transfer' ? '⇄' : inflow ? '↙' : '↗'}</span><div class="amount num ${type === 'transfer' ? '' : inflow ? 'amount-in' : 'amount-out'}">${type === 'transfer' ? '' : inflow ? '+' : '−'}${money(t.amount_minor)}</div></div>
+          <div class="muted review-date-line">${fdate(t.date)}${t.time ? ' · ' + esc(t.time) : ''} · ${esc(t.account_name)}</div>
+          ${t.flags.some(f => /date/i.test(f)) ? '<button type="button" class="review-date-warning" id="review-fix-date" aria-label="Check and correct transaction date">⚠ Check date · Edit</button>' : ''}
           <div class="desc" title="As read from your statement. May contain errors.">${esc(t.description || '(no description)')}</div>
           ${t.flags.map((f) => `<div class="flag">⚠ ${esc(f)}</div>`).join('')}
           ${item.pair ? `<div class="flag" style="color:var(--accent)">↔ Matches ${money(item.pair.amount_minor)} in ${esc(item.pair.account_name)} on ${fdate(item.pair.date)}</div>` : ''}
@@ -213,6 +214,19 @@ routes.review = async (main) => {
           await load();
           toast('Name updated');
         } catch (err) { $('#payee-name-error', m.el).textContent = err.message; button.disabled = false; }
+      };
+    };
+    const dateButton = $('#review-fix-date');
+    if (dateButton) dateButton.onclick = () => {
+      const t = state.item.txn;
+      const m = modal(`<h2>Correct transaction date</h2><p class="small muted">Check the date against your statement.</p><div id="review-date-error" role="alert"></div><div class="field"><label for="review-date-input">Transaction date</label><input type="date" id="review-date-input" value="${esc(t.date)}" required></div><div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="review-date-save">Save date</button></div>`);
+      $('[data-x]', m.el).onclick = () => m.close();
+      $('#review-date-save', m.el).onclick = async () => {
+        const date = $('#review-date-input', m.el).value;
+        if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date)) { $('#review-date-error', m.el).textContent = 'Choose a valid date.'; return; }
+        const button = $('#review-date-save', m.el); button.disabled = true;
+        try { await api('/transactions/' + t.id, {method:'PATCH', body:{date}}); m.close(); await load(); toast('Date updated'); }
+        catch (e) { $('#review-date-error', m.el).textContent = e.message; button.disabled = false; }
       };
     };
     $('#b-skip').onclick = skip; $('#b-undo').onclick = undo;
