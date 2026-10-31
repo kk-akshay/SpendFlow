@@ -240,11 +240,19 @@ def apply_category(db, user_id: int, txn_id: int, p: dict) -> dict:
             raise ValueError("Only incoming transactions can be refunds.")
         ttype = "expense"
         refund_flag = 1
+        if splits:
+            raise ValueError("Refunds cannot be split. Use a single expense category.")
     else:
         ttype = requested if requested in TYPES else ("expense" if t["is_refund"] else derived)
         refund_flag = 1 if t["is_refund"] and ttype == "expense" else 0
+    if refund_flag and cat and cat["kind"] != "expense":
+        raise ValueError("Refunds must use an expense category.")
     if t["refund_of_id"] and not refund_flag:
         raise ValueError("Unlink this refund before changing its type.")
+    if t["refund_of_id"] and cat:
+        parent = get_txn(db,user_id,t["refund_of_id"])
+        if not parent or parent["category_id"] != cat["id"]:
+            raise ValueError("Linked refunds inherit their purchase category; unlink to recategorize.")
     if ttype != "expense" and t["direction"] == "debit":
         from . import refunds
         if refunds.linked_total(db,user_id,txn_id):
@@ -399,8 +407,12 @@ def search(db, user_id: int, f: dict) -> dict:
     if f.get("status") in ("pending", "categorized", "skipped"):
         where.append("t.status=?")
         args.append(f["status"])
-    if f.get("type") in TYPES:
+    if f.get("type") == "refund":
+        where.append("t.is_refund=1")
+    elif f.get("type") in TYPES:
         where.append("t.type=?")
+        if f["type"]=="expense":
+            where.append("t.is_refund=0")
         args.append(f["type"])
     if f.get("recurring"):
         where.append("t.recurring=1")
@@ -423,8 +435,8 @@ def search(db, user_id: int, f: dict) -> dict:
     base = " FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories c ON c.id=t.category_id WHERE " + " AND ".join(where)
     agg = db.execute(
         "SELECT COUNT(*) n, "
-        "COALESCE(SUM(CASE WHEN t.type='income' AND t.direction='credit' THEN t.amount_minor END),0) money_in, "
-        "COALESCE(SUM(CASE WHEN t.type='expense' AND t.direction='debit' THEN t.amount_minor END),0) money_out" + base, args).fetchone()
+        "COALESCE(SUM(CASE WHEN t.direction='credit' THEN t.amount_minor END),0) money_in, "
+        "COALESCE(SUM(CASE WHEN t.direction='debit' THEN t.amount_minor END),0) money_out" + base, args).fetchone()
     rows = db.execute(SELECT_TXN + " WHERE " + " AND ".join(where) + f" ORDER BY {order} LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()
     return {"items": [serialize(r) for r in rows], "total": agg["n"], "money_in": agg["money_in"],
             "money_out": agg["money_out"], "page": offset // limit + 1, "pages": max(1, -(-agg["n"] // limit))}
