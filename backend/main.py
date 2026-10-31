@@ -756,9 +756,13 @@ def list_tags(user=Depends(current_user), db=Depends(get_db)):
     from .analytics import LINES, EXP
     tags = [dict(r) for r in db.execute("SELECT id,name,kind FROM tags WHERE user_id=? ORDER BY kind,name",(uid,))]
     for tag in tags:
-        count = db.execute("SELECT COUNT(*) FROM transaction_tags tt JOIN transactions t ON t.id=tt.txn_id "
-                           "WHERE tt.tag_id=? AND t.user_id=? AND t.status!='staged' AND t.removed_at IS NULL",
-                           (tag["id"],uid)).fetchone()[0]
+        count = db.execute("SELECT COUNT(*) FROM transactions t "
+                           "WHERE t.user_id=? AND t.status!='staged' AND t.removed_at IS NULL AND "
+                           "((EXISTS(SELECT 1 FROM transaction_tags tt WHERE tt.txn_id=t.id AND tt.tag_id=?) "
+                           "AND NOT(t.is_refund=1 AND t.refund_of_id IS NOT NULL)) OR "
+                           "(t.is_refund=1 AND t.refund_of_id IS NOT NULL AND EXISTS("
+                           "SELECT 1 FROM transaction_tags tt WHERE tt.txn_id=t.refund_of_id AND tt.tag_id=?)))",
+                           (uid,tag["id"],tag["id"])).fetchone()[0]
         spend = db.execute(
             f"SELECT COALESCE(SUM({EXP}),0) FROM ({LINES}) x "
             "WHERE x.type='expense' AND x.kind!='savings' "
@@ -784,21 +788,26 @@ def create_tag(body: TagCreate, user=Depends(current_user), db=Depends(get_db)):
 
 @app.get("/api/transactions/{txn_id}/tags")
 def get_transaction_tags(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
-    if not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=? AND status!='staged'",
-                      (txn_id, user["id"])).fetchone():
+    row = db.execute("SELECT refund_of_id,is_refund FROM transactions "
+                     "WHERE id=? AND user_id=? AND status!='staged'",(txn_id,user["id"])).fetchone()
+    if not row:
         raise LookupError("Transaction not found.")
+    source = row["refund_of_id"] if row["is_refund"] and row["refund_of_id"] else txn_id
     return [dict(r) for r in db.execute(
         "SELECT g.id,g.name,g.kind FROM tags g JOIN transaction_tags tt ON tt.tag_id=g.id "
         "WHERE tt.txn_id=? AND g.user_id=? ORDER BY g.kind,g.name",
-        (txn_id, user["id"]))]
+        (source, user["id"]))]
 
 
 @app.put("/api/transactions/{txn_id}/tags")
 def set_transaction_tags(txn_id: int, body: TagAssignment, user=Depends(current_user), db=Depends(get_db)):
     uid = user["id"]
-    if not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=? AND status!='staged'",
-                      (txn_id, uid)).fetchone():
+    owned = db.execute("SELECT is_refund,refund_of_id FROM transactions "
+                       "WHERE id=? AND user_id=? AND status!='staged'",(txn_id,uid)).fetchone()
+    if not owned:
         raise LookupError("Transaction not found.")
+    if owned["is_refund"] and owned["refund_of_id"]:
+        raise ValueError("Linked refunds inherit tags from their purchase. Unlink to edit their tags.")
     ids = sorted(set(body.tag_ids))
     if ids:
         valid = db.execute(
@@ -819,11 +828,14 @@ def tag_transactions(tag_id: int, user=Depends(current_user), db=Depends(get_db)
     if not tag:
         raise LookupError("Tag not found.")
     rows = db.execute(
-        "SELECT t.id,t.date,t.amount_minor,t.direction,t.type,t.merchant,t.description,a.name AS account_name "
-        "FROM transaction_tags tt JOIN transactions t ON t.id=tt.txn_id "
-        "JOIN accounts a ON a.id=t.account_id "
-        "WHERE tt.tag_id=? AND t.user_id=? AND t.status!='staged' AND t.removed_at IS NULL "
-        "ORDER BY t.date DESC,t.id DESC LIMIT 1000", (tag_id,user["id"])).fetchall()
+        "SELECT t.id,t.date,t.amount_minor,t.direction,t.type,t.is_refund,t.merchant,t.description,a.name AS account_name "
+        "FROM transactions t JOIN accounts a ON a.id=t.account_id "
+        "WHERE t.user_id=? AND t.status!='staged' AND t.removed_at IS NULL AND "
+        "((EXISTS(SELECT 1 FROM transaction_tags tt WHERE tt.txn_id=t.id AND tt.tag_id=?) "
+        "AND NOT(t.is_refund=1 AND t.refund_of_id IS NOT NULL)) OR "
+        "(t.is_refund=1 AND t.refund_of_id IS NOT NULL AND EXISTS("
+        "SELECT 1 FROM transaction_tags tt WHERE tt.txn_id=t.refund_of_id AND tt.tag_id=?))) "
+        "ORDER BY t.date DESC,t.id DESC LIMIT 1000", (user["id"],tag_id,tag_id)).fetchall()
     return {"tag": dict(tag), "transactions": [dict(r) for r in rows]}
 
 
