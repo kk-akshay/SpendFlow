@@ -37,12 +37,16 @@ routes.review = async (main) => {
     main.innerHTML = `<div class="review"><div class="row" style="justify-content:flex-end;margin-bottom:12px"><label class="small">Review order <select id="review-order" style="width:auto"><option value="desc" ${order === 'desc' ? 'selected' : ''}>Newest first</option><option value="asc" ${order === 'asc' ? 'selected' : ''}>Oldest first</option></select></label></div>${progressHtml(p)}
       <div class="stage" id="stage"><div class="swipe-hint r" id="hint-r">${sgCat ? 'ACCEPT' : ''}</div><div class="swipe-hint l" id="hint-l">SKIP</div>
         <article class="tcard enter" id="card" aria-label="Transaction to categorise">
-          <div class="kind"><span class="pill ${type === 'transfer' ? '' : inflow ? 'good' : ''}">${typeLabel[type]}</span>
-            <button type="button" class="btn sm review-type-btn" id="type-btn" title="Change transaction type" aria-haspopup="dialog">Change type ▾</button></div>
-          <div class="review-payee-heading"><div class="merchant">${esc(t.merchant || 'Unknown merchant')}</div><button type="button" class="btn sm" id="edit-payee-name" aria-label="Edit merchant or person name">✎ Edit name</button></div>
+          <div class="kind"><span class="pill ${type === 'transfer' ? '' : inflow ? 'good' : ''}">${typeLabel[type]}</span></div>
+          <div class="review-payee-heading"><div class="merchant">${esc(t.merchant || 'Unknown merchant')}</div></div>
+          <div class="review-quick-actions" role="group" aria-label="Edit transaction">
+            <button type="button" class="btn sm review-quick-btn" id="type-btn" title="Change transaction type" aria-haspopup="dialog"><span aria-hidden="true">⇄</span> Change type <span aria-hidden="true">⌄</span></button>
+            <button type="button" class="btn sm review-quick-btn" id="edit-payee-name" aria-label="Edit merchant or person name"><span aria-hidden="true">✎</span> Edit name</button>
+          </div>
           <div class="review-amount-row"><span class="review-direction ${type === 'transfer' ? 'is-transfer' : inflow ? 'is-income' : 'is-expense'}" aria-hidden="true">${type === 'transfer' ? '⇄' : inflow ? '↙' : '↗'}</span><div class="amount num ${type === 'transfer' ? '' : inflow ? 'amount-in' : 'amount-out'}">${type === 'transfer' ? '' : inflow ? '+' : '−'}${money(t.amount_minor)}</div></div>
-          <div class="muted review-date-line">${fdate(t.date)}${t.time ? ' · ' + esc(t.time) : ''} · ${esc(t.account_name)}</div>
-          ${t.flags.some(f => /date/i.test(f)) ? '<button type="button" class="review-date-warning" id="review-fix-date" aria-label="Check and correct transaction date">⚠ Check date · Edit</button>' : ''}
+          <div class="review-date-line"><span class="muted">${fdate(t.date)}${t.time ? ' · ' + esc(t.time) : ''} · ${esc(t.account_name)}</span>
+            <button type="button" class="review-date-warning" id="review-fix-date" aria-label="Edit transaction date">${t.flags.some(f => /date/i.test(f)) ? '⚠' : '✎'} Edit date</button></div>
+          ${type === 'refund' ? `<div class="review-refund-callout"><button type="button" class="btn sm review-refund-link" id="review-refund-link">↳ Link refund to purchase</button><span class="small muted">Save the refund with an expense category, then choose its original purchase.</span></div>` : ''}
           <div class="desc" title="As read from your statement. May contain errors.">${esc(t.description || '(no description)')}</div>
           ${t.flags.map((f) => `<div class="flag">⚠ ${esc(f)}</div>`).join('')}
           ${item.pair ? `<div class="flag" style="color:var(--accent)">↔ Matches ${money(item.pair.amount_minor)} in ${esc(item.pair.account_name)} on ${fdate(item.pair.date)}</div>` : ''}
@@ -120,13 +124,14 @@ routes.review = async (main) => {
     if (busy || !state.item) return;
     busy = true;
     const t = state.item.txn;
+    const isRefund = (typeOverride || (t.is_refund ? 'refund' : t.type)) === 'refund';
     const card = $('#card');
     card && card.classList.add('out-r');
     try {
       const body = { ...payload, note: opts.note || undefined, recurring: opts.recurring || undefined, remember: !!opts.remember, apply_similar: opts.similar && state.item.similar_count > 0 && !!payload.category_id };
       if (typeOverride) body.type = typeOverride;
-      if (body.type==='refund' && !body.category_id && !body.splits) throw Error('Choose an expense category for this refund.');
-      if (body.type==='refund' && body.category_id && cat(body.category_id)?.kind!=='expense') throw Error('Choose an expense category for this refund.');
+      if (isRefund && !body.category_id && !body.splits) throw Error('Choose an expense category for this refund.');
+      if (isRefund && body.category_id && cat(body.category_id)?.kind!=='expense') throw Error('Choose an expense category for this refund.');
       const r = await api(`/review/${t.id}/categorize?scope=${scope}&order=${order}`, { method: 'POST', body });
       if (selectedTagIds.length) {
         try {
@@ -138,7 +143,7 @@ routes.review = async (main) => {
       selectedTagIds = [];
       lastUndo = r.undo; state = { item: r.item, progress: r.progress }; resetOpts();
       if (r.applied_similar) toast(`Applied to ${r.applied_similar} similar transaction${r.applied_similar > 1 ? 's' : ''} too`, { action: 'Undo', onAction: undo });
-      if (body.type==='refund') {
+      if (isRefund) {
         await openRefundLink(t.id);
         draw();
       } else setTimeout(draw, 160);
@@ -214,6 +219,26 @@ routes.review = async (main) => {
           await load();
           toast('Name updated');
         } catch (err) { $('#payee-name-error', m.el).textContent = err.message; button.disabled = false; }
+      };
+    };
+    const refundLinkButton = $('#review-refund-link');
+    if (refundLinkButton) refundLinkButton.onclick = () => {
+      const expenseCats = S.cats.filter(c => c.kind === 'expense');
+      if (!expenseCats.length) { toast('Create an expense category first.', { err: true }); return; }
+      const suggestedId = state.item.suggestion?.category_id;
+      const chosenId = expenseCats.some(c => c.id === suggestedId) ? suggestedId : null;
+      const m = modal(`<h2>Link refund to a purchase</h2>
+        <p class="small muted">First save this refund with an expense category. Then choose the original purchase from matching transactions. The link will use that purchase's category.</p>
+        <div class="field"><label for="review-refund-category">Expense category</label>
+          <select id="review-refund-category"><option value="">Choose category…</option>${expenseCats.map(c => `<option value="${c.id}" ${c.id === chosenId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
+        <div id="review-refund-error" class="small" role="alert"></div>
+        <div class="foot"><button class="btn" data-x>Cancel</button><button class="btn primary" id="review-refund-continue">Save &amp; find purchase</button></div>`);
+      $('[data-x]', m.el).onclick = () => m.close();
+      $('#review-refund-continue', m.el).onclick = () => {
+        const id = +$('#review-refund-category', m.el).value;
+        if (!expenseCats.some(c => c.id === id)) { $('#review-refund-error', m.el).textContent = 'Choose an expense category.'; return; }
+        m.close();
+        submit({ category_id: id });
       };
     };
     const dateButton = $('#review-fix-date');
