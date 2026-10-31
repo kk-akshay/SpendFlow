@@ -421,7 +421,7 @@ def delete_category(cid: int, user=Depends(current_user), db=Depends(get_db)):
         db.execute("DELETE FROM splits WHERE txn_id=?", (tid,))
     db.execute(
         "UPDATE transactions SET category_id=NULL, status='pending', reviewed_at=NULL, "
-        "type=CASE WHEN transfer_pair_id IS NOT NULL THEN 'transfer' WHEN direction='credit' THEN 'income' ELSE 'expense' END "
+        "type=CASE WHEN transfer_pair_id IS NOT NULL THEN 'transfer' WHEN direction='credit' AND is_refund=0 THEN 'income' ELSE 'expense' END "
         "WHERE user_id=? AND (category_id=? OR id IN (%s))" % (",".join("?" * len(split_ids)) or "NULL"),
         [user["id"], cid] + split_ids)
     db.execute("DELETE FROM categories WHERE id=?", (cid,))
@@ -753,17 +753,23 @@ class TagAssignment(BaseModel):
 @app.get("/api/tags")
 def list_tags(user=Depends(current_user), db=Depends(get_db)):
     uid = user["id"]
-    rows = db.execute(
-        "SELECT g.id,g.name,g.kind,COUNT(t.id) AS transaction_count,"
-        "COALESCE(SUM(CASE WHEN t.type='expense' AND t.direction='debit' "
-        "AND t.status!='staged' AND t.removed_at IS NULL "
-        "AND (t.dup_status IS NULL OR t.dup_status='cleared') THEN t.amount_minor ELSE 0 END),0) AS expense_minor "
-        "FROM tags g LEFT JOIN transaction_tags tt ON tt.tag_id=g.id "
-        "LEFT JOIN transactions t ON t.id=tt.txn_id AND t.user_id=g.user_id "
-        "WHERE g.user_id=? GROUP BY g.id,g.name,g.kind ORDER BY g.kind,g.name",
-        (uid,)).fetchall()
-    return [dict(r) for r in rows]
-
+    from .analytics import LINES, EXP
+    tags = [dict(r) for r in db.execute("SELECT id,name,kind FROM tags WHERE user_id=? ORDER BY kind,name",(uid,))]
+    for tag in tags:
+        count = db.execute("SELECT COUNT(*) FROM transactions t "
+                           "WHERE t.user_id=? AND t.status!='staged' AND t.removed_at IS NULL AND "
+                           "((EXISTS(SELECT 1 FROM transaction_tags tt WHERE tt.txn_id=t.id AND tt.tag_id=?) "
+                           "AND NOT(t.is_refund=1 AND t.refund_of_id IS NOT NULL)) OR "
+                           "(t.is_refund=1 AND t.refund_of_id IS NOT NULL AND EXISTS("
+                           "SELECT 1 FROM transaction_tags tt WHERE tt.txn_id=t.refund_of_id AND tt.tag_id=?)))",
+                           (uid,tag["id"],tag["id"])).fetchone()[0]
+        spend = db.execute(
+            f"SELECT COALESCE(SUM({EXP}),0) FROM ({LINES}) x "
+            "WHERE x.type='expense' AND x.kind!='savings' "
+            "AND EXISTS(SELECT 1 FROM transaction_tags tt WHERE tt.txn_id=x.id AND tt.tag_id=?)",
+            (uid,tag["id"])).fetchone()[0]
+        tag.update(transaction_count=count,expense_minor=spend)
+    return tags
 
 @app.post("/api/tags")
 def create_tag(body: TagCreate, user=Depends(current_user), db=Depends(get_db)):
@@ -782,21 +788,26 @@ def create_tag(body: TagCreate, user=Depends(current_user), db=Depends(get_db)):
 
 @app.get("/api/transactions/{txn_id}/tags")
 def get_transaction_tags(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
-    if not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=? AND status!='staged'",
-                      (txn_id, user["id"])).fetchone():
+    row = db.execute("SELECT refund_of_id,is_refund FROM transactions "
+                     "WHERE id=? AND user_id=? AND status!='staged'",(txn_id,user["id"])).fetchone()
+    if not row:
         raise LookupError("Transaction not found.")
+    source = row["refund_of_id"] if row["is_refund"] and row["refund_of_id"] else txn_id
     return [dict(r) for r in db.execute(
         "SELECT g.id,g.name,g.kind FROM tags g JOIN transaction_tags tt ON tt.tag_id=g.id "
         "WHERE tt.txn_id=? AND g.user_id=? ORDER BY g.kind,g.name",
-        (txn_id, user["id"]))]
+        (source, user["id"]))]
 
 
 @app.put("/api/transactions/{txn_id}/tags")
 def set_transaction_tags(txn_id: int, body: TagAssignment, user=Depends(current_user), db=Depends(get_db)):
     uid = user["id"]
-    if not db.execute("SELECT 1 FROM transactions WHERE id=? AND user_id=? AND status!='staged'",
-                      (txn_id, uid)).fetchone():
+    owned = db.execute("SELECT is_refund,refund_of_id FROM transactions "
+                       "WHERE id=? AND user_id=? AND status!='staged'",(txn_id,uid)).fetchone()
+    if not owned:
         raise LookupError("Transaction not found.")
+    if owned["is_refund"] and owned["refund_of_id"]:
+        raise ValueError("Linked refunds inherit tags from their purchase. Unlink to edit their tags.")
     ids = sorted(set(body.tag_ids))
     if ids:
         valid = db.execute(
@@ -817,11 +828,14 @@ def tag_transactions(tag_id: int, user=Depends(current_user), db=Depends(get_db)
     if not tag:
         raise LookupError("Tag not found.")
     rows = db.execute(
-        "SELECT t.id,t.date,t.amount_minor,t.direction,t.type,t.merchant,t.description,a.name AS account_name "
-        "FROM transaction_tags tt JOIN transactions t ON t.id=tt.txn_id "
-        "JOIN accounts a ON a.id=t.account_id "
-        "WHERE tt.tag_id=? AND t.user_id=? AND t.status!='staged' AND t.removed_at IS NULL "
-        "ORDER BY t.date DESC,t.id DESC LIMIT 1000", (tag_id,user["id"])).fetchall()
+        "SELECT t.id,t.date,t.amount_minor,t.direction,t.type,t.is_refund,t.merchant,t.description,a.name AS account_name "
+        "FROM transactions t JOIN accounts a ON a.id=t.account_id "
+        "WHERE t.user_id=? AND t.status!='staged' AND t.removed_at IS NULL AND "
+        "((EXISTS(SELECT 1 FROM transaction_tags tt WHERE tt.txn_id=t.id AND tt.tag_id=?) "
+        "AND NOT(t.is_refund=1 AND t.refund_of_id IS NOT NULL)) OR "
+        "(t.is_refund=1 AND t.refund_of_id IS NOT NULL AND EXISTS("
+        "SELECT 1 FROM transaction_tags tt WHERE tt.txn_id=t.refund_of_id AND tt.tag_id=?))) "
+        "ORDER BY t.date DESC,t.id DESC LIMIT 1000", (user["id"],tag_id,tag_id)).fetchall()
     return {"tag": dict(tag), "transactions": [dict(r) for r in rows]}
 
 
@@ -899,6 +913,32 @@ def resolve_all_duplicates(b: DupAction, user=Depends(current_user), db=Depends(
     for i in ids:
         resolve_duplicate(i, b, user, db)
     return {"changed": len(ids)}
+
+
+# ================================================================ user-confirmed refunds
+class RefundLinkIn(BaseModel):
+    original_id: int
+
+@app.get("/api/transactions/{txn_id}/refund-candidates")
+def refund_candidates(txn_id: int, q: str = "", from_date: str | None = None,
+                      to_date: str | None = None, amount_minor: int | None = None,
+                      user=Depends(current_user), db=Depends(get_db)):
+    from . import refunds
+    try:
+        return refunds.candidates(db,user["id"],txn_id,q,from_date,to_date,amount_minor)
+    except ValueError:
+        raise HTTPException(400, "Invalid refund search filters.")
+
+@app.post("/api/transactions/{txn_id}/refund-link")
+def refund_link(txn_id: int, body: RefundLinkIn, user=Depends(current_user), db=Depends(get_db)):
+    from . import refunds
+    result = refunds.link(db,user["id"],txn_id,body.original_id)
+    return {**result,"txn":txns.get_txn(db,user["id"],txn_id)}
+
+@app.delete("/api/transactions/{txn_id}/refund-link")
+def refund_unlink(txn_id: int, user=Depends(current_user), db=Depends(get_db)):
+    from . import refunds
+    return refunds.unlink(db,user["id"],txn_id)
 
 
 # ================================================================ review flow
@@ -1020,7 +1060,6 @@ class TxnEdit(BaseModel):
     direction: str | None = None
     send_to_review: bool = False
     remember: bool = False
-    remember: bool = False
 
 
 @app.patch("/api/transactions/{txn_id}")
@@ -1053,7 +1092,13 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         if not iso:
             raise HTTPException(400, "That date isn't valid.")
         vals["date"] = iso
+    # Never leave the refund flag on a debit after editing its bank direction.
+    if row["is_refund"] and body.get("direction",row["direction"]) != "credit" and body.get("type") not in ("expense","transfer","income"):
+        raise ValueError("Change the refund to a normal transaction type before changing its direction.")
     if "amount_minor" in body or "direction" in body:
+        from . import refunds
+        refunds.validate_amount_change(db,uid,row,body.get("amount_minor") or row["amount_minor"],
+                                       body.get("direction") or row["direction"])
         if db.execute("SELECT 1 FROM splits WHERE txn_id=?", (txn_id,)).fetchone() and not body.get("splits"):
             raise HTTPException(400, "Remove the split first, then change the amount.")
         if "amount_minor" in body:
@@ -1066,6 +1111,16 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
         undo.append(txns.snapshot(db, txn_id))
         db.execute(f"UPDATE transactions SET {', '.join(f'{k}=?' for k in vals)} WHERE id=?", [*vals.values(), txn_id])
 
+    if "type" in body and body["type"] not in (*txns.TYPES, "refund"):
+        raise ValueError("Unknown transaction type.")
+    if body.get("type") == "refund" and body.get("direction",row["direction"]) != "credit":
+        raise ValueError("Only incoming transactions can be refunds.")
+    if "type" in body and row["refund_of_id"] and body["type"] != "refund":
+        raise ValueError("Unlink this refund before changing its type.")
+    if "type" in body and row["direction"]=="debit" and body["type"]!="expense":
+        from . import refunds
+        if refunds.linked_total(db,uid,txn_id):
+            raise ValueError("Unlink refunds before changing this purchase type.")
     if "category_id" in body or body.get("splits"):
         payload = {k: body[k] for k in ("category_id", "splits", "note", "recurring", "recurring_freq", "type", "remember") if k in body}
         res = txns.apply_category(db, uid, txn_id, payload)
@@ -1079,14 +1134,15 @@ def edit_transaction(txn_id: int, e: TxnEdit, user=Depends(current_user), db=Dep
             sets += ["recurring=?", "recurring_freq=?"]
             args += [1 if body["recurring"] else 0,
                      (body.get("recurring_freq") if body.get("recurring_freq") in txns.FREQS else row["recurring_freq"] or "monthly") if body["recurring"] else None]
-        if "type" in body and body["type"] in txns.TYPES:
-            sets.append("type=?")
-            args.append(body["type"])
+        if "type" in body:
+            sets.extend(["type=?", "is_refund=?"])
+            args.extend(["expense" if body["type"]=="refund" else body["type"],
+                         1 if body["type"]=="refund" else 0])
         if sets:
             if not undo:
                 undo.append(txns.snapshot(db, txn_id))
             db.execute(f"UPDATE transactions SET {', '.join(sets)} WHERE id=?", [*args, txn_id])
-    if body.get("remember") and row["merchant_key"]:
+    if body.get("remember") and row["merchant_key"] and not db.execute("SELECT is_refund FROM transactions WHERE id=?", (txn_id,)).fetchone()[0]:
         fresh = db.execute("SELECT * FROM transactions WHERE id=?", (txn_id,)).fetchone()
         if fresh["category_id"]:
             ledger.remember(db, uid, fresh, fresh["category_id"], fresh["type"])
@@ -1131,18 +1187,29 @@ def export_csv(user=Depends(current_user), db=Depends(get_db)):
         s = "" if v is None else str(v)
         return "'" + s if s[:1] in ("=", "+", "-", "@", "\t", "\r") else s   # spreadsheet formula injection
 
+    from . import refunds
+
+    # Streaming responses may outlive the request database session; compute
+    # purchase net costs before opening the CSV generator.
+    net_costs = {
+        r["id"]: (r["amount_minor"]-refunds.linked_total(db,user["id"],r["id"]))/100
+        for r in rows if r["type"]=="expense" and r["direction"]=="debit"
+    }
+
     def gen():
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["date", "account", "merchant", "description", "money_in", "money_out", "type", "category", "note", "recurring", "status"])
+        w.writerow(["date", "account", "merchant", "description", "money_in", "money_out", "type", "category", "note", "recurring", "status", "refund_of_id", "purchase_net_expense"])
         yield buf.getvalue()
         for r in rows:
             buf.seek(0), buf.truncate()
             amt = r["amount_minor"] / 100
             w.writerow([r["date"], safe(r["account_name"]), safe(r["merchant"]), safe(r["description"]),
                         amt if r["direction"] == "credit" else "", amt if r["direction"] == "debit" else "",
-                        r["type"], safe(r["category_name"] or ("Split" if r["split_count"] else "")), safe(r["note"]),
-                        "yes" if r["recurring"] else "", r["status"]])
+                        "refund" if r["is_refund"] else r["type"], safe(r["category_name"] or ("Split" if r["split_count"] else "")), safe(r["note"]),
+                        "yes" if r["recurring"] else "", r["status"],
+                         r["refund_of_id"] if r["is_refund"] else "",
+                         net_costs.get(r["id"], "")])
             yield buf.getvalue()
 
     return StreamingResponse(gen(), media_type="text/csv",
@@ -1468,7 +1535,9 @@ def create_flow(b: FlowIn, user=Depends(current_user), db=Depends(get_db)):
     rows=db.execute(f"SELECT * FROM transactions WHERE user_id=? AND id IN ({marks}) AND status!='staged' AND removed_at IS NULL", [user["id"],*ids]).fetchall()
     if len(rows)!=len(ids) or db.execute(f"SELECT 1 FROM flow_group_members WHERE txn_id IN ({marks}) LIMIT 1",ids).fetchone() or db.execute(f"SELECT 1 FROM transaction_group_members WHERE txn_id IN ({marks}) LIMIT 1",ids).fetchone():
         raise ValueError("Some transactions cannot be linked; check existing flow groups")
+    from . import refunds
     for row in rows:
+        refunds.ensure_not_refund_linked(db,user["id"],row)
         if row["dup_status"]=="suspected" or db.execute("SELECT 1 FROM splits WHERE txn_id=?", (row["id"],)).fetchone():
             raise ValueError("Resolve suspected duplicates and split categories before linking")
     cur=db.execute("INSERT INTO flow_groups(user_id,kind) VALUES(?,?)",(user["id"],b.kind))

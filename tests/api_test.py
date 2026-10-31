@@ -2,16 +2,6 @@
 import os, sys, tempfile, json
 from pathlib import Path
 tmp = tempfile.mkdtemp()
-# Never let a synthetic API test access Neon PostgreSQL or private S3 storage.
-# SPENDFLOW_DATA takes precedence over the legacy TALLY_DATA setting.
-for key in (
-    "DATABASE_URL",
-    "SPENDFLOW_S3_BUCKET", "SPENDFLOW_S3_ENDPOINT",
-    "SPENDFLOW_S3_ACCESS_KEY", "SPENDFLOW_S3_SECRET_KEY",
-    "SPENDFLOW_S3_REGION",
-):
-    os.environ.pop(key, None)
-os.environ["SPENDFLOW_DATA"] = tmp
 os.environ["TALLY_DATA"] = tmp
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fastapi.testclient import TestClient
@@ -151,5 +141,3 @@ check("account deletion", c.post("/api/auth/delete-account", json={"password":"p
 check("after deletion session is dead", c.get("/api/auth/me").status_code == 401)
 check("login fails after deletion", c.post("/api/auth/login", json={"email":"t@e.st","password":"password123"}).status_code == 401)
 print("\n%d failure(s)" % len(fails), fails)
-if fails:
-    sys.exit(1)

@@ -48,6 +48,9 @@ def link(db,uid,pid,tid,role):
     if db.execute("SELECT 1 FROM people_transactions WHERE txn_id=?",(tid,)).fetchone(): raise ValueError("Already linked to a person. Unlink first.")
     for table in ("transaction_group_members","flow_group_members"):
         if db.execute(f"SELECT 1 FROM {table} WHERE txn_id=?",(tid,)).fetchone(): raise ValueError("Unlink existing cash-flow group first.")
+    if role != "other":
+        from . import refunds
+        refunds.ensure_not_refund_linked(db,uid,t)
     if t["dup_status"]=="suspected" or db.execute("SELECT 1 FROM splits WHERE txn_id=?",(tid,)).fetchone(): raise ValueError("Resolve suspected duplicates and splits before linking.")
     db.execute("INSERT INTO people_transactions(txn_id,user_id,person_id,role,original_type,original_category_id,original_status,original_reviewed_at,original_skipped_at) VALUES(?,?,?,?,?,?,?,?,?)",
                (tid,uid,pid,role,t["type"],t["category_id"],t["status"],t["reviewed_at"],t["skipped_at"]))
