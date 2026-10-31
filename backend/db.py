@@ -96,7 +96,9 @@ CREATE TABLE IF NOT EXISTS transactions(
   reviewed_at TEXT,
   skipped_at TEXT,
   removed_at TEXT,
-  excluded_rule_id INTEGER
+  excluded_rule_id INTEGER,
+  is_refund INTEGER NOT NULL DEFAULT 0 CHECK(is_refund IN (0,1)),
+  refund_of_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_txn_user_date ON transactions(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_txn_user_status ON transactions(user_id, status);
@@ -319,6 +321,11 @@ def init_db() -> None:
             conn.execute("ALTER TABLE transactions ADD COLUMN removed_at TEXT")
         if "excluded_rule_id" not in columns:
             conn.execute("ALTER TABLE transactions ADD COLUMN excluded_rule_id INTEGER")
+        if "is_refund" not in columns:
+            conn.execute("ALTER TABLE transactions ADD COLUMN is_refund INTEGER NOT NULL DEFAULT 0 CHECK(is_refund IN (0,1))")
+        if "refund_of_id" not in columns:
+            conn.execute("ALTER TABLE transactions ADD COLUMN refund_of_id INTEGER REFERENCES transactions(id) ON DELETE SET NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_refund_owner ON transactions(user_id,refund_of_id)")
         account_columns = {r["name"] for r in conn.execute("PRAGMA table_info(accounts)")}
         if "card_monthly_limit_minor" not in account_columns:
             conn.execute("ALTER TABLE accounts ADD COLUMN card_monthly_limit_minor INTEGER NOT NULL DEFAULT 0")

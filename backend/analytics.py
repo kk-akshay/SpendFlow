@@ -18,15 +18,45 @@ from datetime import date, timedelta
 from .config import CURRENCY
 from .txns import ACTIVE, DUP_OK, SELECT_TXN, serialize
 
+# One shared purchase-based expense ledger. Linked refunds are applied to the
+# original purchase's date/category (and split categories); the incoming bank
+# transaction stays on its actual date and is excluded from purchase totals.
+# Unlinked refund credits remain negative expenses on their own dates.
+# The first split receives any integer-rounding remainder so cents never vanish.
 LINES = f"""
 SELECT t.id, t.date, substr(t.date,1,7) AS month, t.direction, t.type, t.account_id, t.status, t.merchant, t.merchant_key,
-       COALESCE(s.category_id, t.category_id) AS category_id,
-       COALESCE(s.amount_minor, t.amount_minor) AS amount_minor,
+       COALESCE(s.category_id,t.category_id) AS category_id,
+       COALESCE(s.amount_minor,t.amount_minor) -
+       CASE WHEN t.direction='debit' AND t.type='expense' AND t.is_refund=0 THEN
+           CASE WHEN s.id IS NULL THEN COALESCE(rt.refunded_minor,0)
+                WHEN s.id=(SELECT MIN(ss.id) FROM splits ss WHERE ss.txn_id=t.id) THEN
+                     COALESCE(rt.refunded_minor,0) -
+                     COALESCE((SELECT SUM(CAST(FLOOR(1.0*COALESCE(rt.refunded_minor,0)*ss.amount_minor/t.amount_minor) AS BIGINT))
+                               FROM splits ss WHERE ss.txn_id=t.id AND ss.id<>s.id),0)
+                ELSE CAST(FLOOR(1.0*COALESCE(rt.refunded_minor,0)*s.amount_minor/t.amount_minor) AS BIGINT)
+           END
+       ELSE 0 END AS amount_minor,
        COALESCE(c.kind,'expense') AS kind
 FROM transactions t
-LEFT JOIN splits s ON s.txn_id = t.id
-LEFT JOIN categories c ON c.id = COALESCE(s.category_id, t.category_id)
-WHERE t.user_id = ? AND t.status IN ('pending','categorized','skipped') AND t.removed_at IS NULL AND {DUP_OK}
+LEFT JOIN splits s ON s.txn_id=t.id
+LEFT JOIN categories c ON c.id=COALESCE(s.category_id,t.category_id)
+LEFT JOIN (
+    SELECT r.user_id,r.refund_of_id,SUM(r.amount_minor) AS refunded_minor
+    FROM transactions r
+    WHERE r.is_refund=1 AND r.refund_of_id IS NOT NULL
+      AND r.status IN ('pending','categorized','skipped') AND r.removed_at IS NULL
+      AND (r.dup_status IS NULL OR r.dup_status='cleared')
+    GROUP BY r.user_id,r.refund_of_id
+) rt ON rt.refund_of_id=t.id AND rt.user_id=t.user_id
+WHERE t.user_id=? AND t.status IN ('pending','categorized','skipped')
+  AND t.removed_at IS NULL AND {DUP_OK}
+  AND NOT (t.is_refund=1 AND t.refund_of_id IS NOT NULL AND EXISTS(
+      SELECT 1 FROM transactions p
+      WHERE p.id=t.refund_of_id AND p.user_id=t.user_id
+        AND p.status IN ('pending','categorized','skipped') AND p.removed_at IS NULL
+        AND (p.dup_status IS NULL OR p.dup_status='cleared')
+        AND p.type='expense' AND p.direction='debit' AND p.is_refund=0
+  ))
 """
 
 EXP = "CASE WHEN direction='debit' THEN amount_minor ELSE -amount_minor END"
@@ -72,7 +102,11 @@ def _add_months_date(d: date, n: int) -> date:
 
 
 def month_list(db, user_id: int) -> list[str]:
-    return [r["month"] for r in db.execute(f"SELECT DISTINCT month FROM ({LINES}) ORDER BY month", (user_id,))]
+    # Keep cash-movement months visible even when all their refunds are linked
+    # back to purchases in earlier months.
+    return [r["month"] for r in db.execute(
+        f"SELECT DISTINCT substr(t.date,1,7) AS month FROM transactions t "
+        f"WHERE t.user_id=? AND {ACTIVE} ORDER BY month", (user_id,))]
 
 
 def pick_month(db, user_id: int, month: str | None) -> str | None:
@@ -238,16 +272,20 @@ def dashboard(db, user_id: int, month: str | None) -> dict:
     if month == today.strftime("%Y-%m"):
         cur_cum = [v if d + 1 <= today.day else None for d, v in enumerate(cur_cum)]
 
+    # Account movement is a cash-flow view: use actual bank dates and amounts,
+    # not the purchase-date net-expense ledger used by budgets and charts.
     accounts = []
     for r in db.execute(
-        f"SELECT a.id, a.name, "
-        f"SUM(CASE WHEN x.type='income' THEN ({INC.replace('direction', 'x.direction').replace('amount_minor', 'x.amount_minor')}) ELSE 0 END) AS income, "
-        f"SUM(CASE WHEN x.type='expense' THEN ({EXP.replace('direction', 'x.direction').replace('amount_minor', 'x.amount_minor')}) ELSE 0 END) AS expense, "
-        f"SUM(CASE WHEN x.type='transfer' AND x.direction='credit' THEN x.amount_minor ELSE 0 END) AS transfer_in, "
-        f"SUM(CASE WHEN x.type='transfer' AND x.direction='debit' THEN x.amount_minor ELSE 0 END) AS transfer_out "
-        f"FROM accounts a LEFT JOIN ({LINES}) x ON x.account_id=a.id AND x.month=? WHERE a.user_id=? GROUP BY a.id ORDER BY a.name",
-        (user_id, month, user_id)):
-        accounts.append({k: (r[k] or 0) if k not in ("id", "name") else r[k] for k in r.keys()})
+        f"SELECT a.id,a.name,"
+        f"COALESCE(SUM(CASE WHEN t.direction='credit' AND t.type!='transfer' THEN t.amount_minor ELSE 0 END),0) AS income,"
+        f"COALESCE(SUM(CASE WHEN t.direction='debit' AND t.type!='transfer' THEN t.amount_minor ELSE 0 END),0) AS expense,"
+        f"COALESCE(SUM(CASE WHEN t.direction='credit' AND t.type='transfer' THEN t.amount_minor ELSE 0 END),0) AS transfer_in,"
+        f"COALESCE(SUM(CASE WHEN t.direction='debit' AND t.type='transfer' THEN t.amount_minor ELSE 0 END),0) AS transfer_out "
+        f"FROM accounts a LEFT JOIN transactions t ON t.account_id=a.id AND t.user_id=a.user_id "
+        f"AND substr(t.date,1,7)=? AND {ACTIVE} "
+        f"WHERE a.user_id=? GROUP BY a.id,a.name ORDER BY a.name",
+        (month,user_id)):
+        accounts.append(dict(r))
 
     recent = [serialize(r) for r in db.execute(
         SELECT_TXN + f" WHERE t.user_id=? AND {ACTIVE} ORDER BY t.date DESC, COALESCE(t.time,'') DESC, t.id DESC LIMIT 8", (user_id,))]
